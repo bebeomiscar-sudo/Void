@@ -1,7 +1,7 @@
 --[[
-    BASKETBALL TOOL — Mobile Edition
-    Features: Auto Dribble, Auto Green (Perfect Shots), Speed Boost, No Jump Cooldown, Ball Indicator
-    Removed: Keybinds (Mobile Optimized)
+    BASKETBALL TOOL V2 — New Game Edition
+    Features: Auto Dunk, Pumpfake, Pass, Sprint, Dribble Moves, Auto Shoot, Auto Green
+    Remotes: Dunk, Pumpfake, Pass, Sprint, Dribble, Shoot
 ]]
 
 -- ═══════════════════════════════════════════
@@ -10,12 +10,10 @@
 local Players           = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService        = game:GetService("RunService")
-local StarterPlayer     = game:GetService("StarterPlayer")
 local TweenService      = game:GetService("TweenService")
 
 local LP       = Players.LocalPlayer
 local camera   = workspace.CurrentCamera
-local IsMobile = true -- Force mobile mode
 
 -- ═══════════════════════════════════════════
 -- LINORIA LIBRARY
@@ -28,7 +26,7 @@ local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))(
 Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
-    Title                = "Basketball Tool Mobile",
+    Title                = "Basketball Tool V2",
     Center               = true,
     AutoShow             = true,
     Resizable            = true,
@@ -37,12 +35,13 @@ local Window = Library:CreateWindow({
     NotifySide           = "Left",
     TabPadding           = 8,
     MenuFadeTime         = 0.2,
-    Size                 = UDim2.fromOffset(480, 480),
+    Size                 = UDim2.fromOffset(480, 520),
 })
 
 local Tabs = {
     Main        = Window:AddTab("Main"),
     Shooting    = Window:AddTab("Shooting"),
+    Dribble     = Window:AddTab("Dribble"),
     Movement    = Window:AddTab("Movement"),
     Visuals     = Window:AddTab("Visuals"),
     Settings    = Window:AddTab("Settings"),
@@ -52,34 +51,49 @@ local Tabs = {
 -- CONFIGURATION
 -- ═══════════════════════════════════════════
 local CFG = {
+    -- Main
+    AutoDunk        = false,
+    AutoPumpfake    = false,
+    AutoPass        = false,
+    
+    -- Dribble
     AutoDribble     = false,
-    DribbleSide     = "Right",
-    DribbleSpeed    = 0.15,
+    DribbleMove     = "X", -- X, V, C
+    DribbleSpeed    = 0.2,
     
+    -- Sprint
+    AutoSprint      = false,
+    
+    -- Shooting
     AutoShoot       = false,
-    AutoGreen       = false, -- NEW: Perfect shot calculation
-    ShootPower      = 0.5,
+    AutoGreen       = false,
+    ShootPower      = 100,
     
+    -- Movement
     SpeedBoost      = false,
     WalkSpeed       = 16,
     JumpPower       = 50,
-    
-    NoJumpCooldown  = false,
     InfJump         = false,
     
+    -- Visuals
     BallIndicator   = false,
-    HoopIndicator   = false, -- NEW: Shows where to shoot
-    IndicatorSize   = 10,
-    IndicatorColor  = Color3.fromRGB(255, 255, 0),
+    HoopIndicator   = false,
+    IndicatorSize   = 12,
+    BallColor       = Color3.fromRGB(255, 165, 0), -- Orange ball
     HoopColor       = Color3.fromRGB(0, 255, 0),
 }
 
 -- ═══════════════════════════════════════════
 -- REMOTES
 -- ═══════════════════════════════════════════
+local Events = ReplicatedStorage:WaitForChild("Events")
 local Remotes = {
-    Dribble = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Dribble"),
-    Shoot   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shoot"),
+    Dunk     = Events:WaitForChild("Dunk"),
+    Pumpfake = Events:WaitForChild("Pumpfake"),
+    Pass     = Events:WaitForChild("Pass"),
+    Sprint   = Events:WaitForChild("Sprint"),
+    Dribble  = Events:WaitForChild("Dribble"),
+    Shoot    = Events:WaitForChild("Shoot"),
 }
 
 -- ═══════════════════════════════════════════
@@ -103,8 +117,170 @@ end)
 -- ═══════════════════════════════════════════
 -- UTILITY FUNCTIONS
 -- ═══════════════════════════════════════════
-local function getScreenCenter()
-    return Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
+local function hasBall()
+    local has = false
+    pcall(function()
+        -- Check character for ball
+        for _, obj in ipairs(character:GetDescendants()) do
+            if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                has = true
+                return
+            end
+        end
+        -- Check if ball is welded to character
+        for _, weld in ipairs(character:GetDescendants()) do
+            if weld:IsA("Weld") or weld:IsA("Motor6D") then
+                if weld.Part1 and weld.Part1.Name:lower():find("ball") then
+                    has = true
+                    return
+                end
+            end
+        end
+    end)
+    return has
+end
+
+local function findNearestHoop()
+    local nearest = nil
+    local dist = math.huge
+    
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            local name = obj.Name:lower()
+            if name:find("hoop") or name:find("rim") or name:find("basket") or name:find("goal") then
+                if obj:IsA("BasePart") then
+                    local d = (obj.Position - hrp.Position).Magnitude
+                    if d < dist then
+                        dist = d
+                        nearest = obj
+                    end
+                end
+            end
+        end
+    end)
+    
+    return nearest, dist
+end
+
+-- ═══════════════════════════════════════════
+-- DUNK SYSTEM
+-- ═══════════════════════════════════════════
+local dunkConn = nil
+
+local function doDunk()
+    local args = {false}
+    pcall(function()
+        Remotes.Dunk:FireServer(unpack(args))
+    end)
+end
+
+local function startAutoDunk()
+    if dunkConn then dunkConn:Disconnect() end
+    
+    dunkConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoDunk then return end
+        
+        if hasBall() then
+            local hoop, dist = findNearestHoop()
+            if hoop and dist < 15 then -- Close to hoop
+                doDunk()
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+local function stopAutoDunk()
+    if dunkConn then
+        dunkConn:Disconnect()
+        dunkConn = nil
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- PUMPFAKE SYSTEM
+-- ═══════════════════════════════════════════
+local pumpConn = nil
+
+local function doPumpfake()
+    pcall(function()
+        Remotes.Pumpfake:FireServer()
+    end)
+end
+
+local function startAutoPumpfake()
+    if pumpConn then pumpConn:Disconnect() end
+    
+    pumpConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoPumpfake then return end
+        
+        if hasBall() then
+            local hoop, dist = findNearestHoop()
+            if hoop and dist < 30 then -- Defender nearby range
+                doPumpfake()
+                task.wait(0.8)
+            end
+        end
+    end)
+end
+
+local function stopAutoPumpfake()
+    if pumpConn then
+        pumpConn:Disconnect()
+        pumpConn = nil
+    end
+end
+
+-- ═══════════════════════════════════════════
+-- PASS SYSTEM
+-- ═══════════════════════════════════════════
+local passConn = nil
+
+local function doPass()
+    pcall(function()
+        Remotes.Pass:FireServer()
+    end)
+end
+
+local function startAutoPass()
+    if passConn then passConn:Disconnect() end
+    
+    passConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoPass then return end
+        
+        if hasBall() then
+            -- Find nearest teammate
+            local nearestTeammate = nil
+            local nearestDist = math.huge
+            
+            pcall(function()
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LP and p.Character then
+                        local team = LP.Team
+                        if team and p.Team == team then
+                            local dist = (p.Character.HumanoidRootPart.Position - hrp.Position).Magnitude
+                            if dist < nearestDist and dist < 50 then
+                                nearestDist = dist
+                                nearestTeammate = p
+                            end
+                        end
+                    end
+                end
+            end)
+            
+            if nearestTeammate and nearestDist < 30 then
+                doPass()
+                task.wait(0.5)
+            end
+        end
+    end)
+end
+
+local function stopAutoPass()
+    if passConn then
+        passConn:Disconnect()
+        passConn = nil
+    end
 end
 
 -- ═══════════════════════════════════════════
@@ -112,8 +288,10 @@ end
 -- ═══════════════════════════════════════════
 local dribbleConn = nil
 
-local function doDribble(side)
-    local args = {side or CFG.DribbleSide}
+local function doDribble(move)
+    local keyCode = Enum.KeyCode[move or CFG.DribbleMove]
+    local args = {{keyCode}}
+    
     pcall(function()
         Remotes.Dribble:FireServer(unpack(args))
     end)
@@ -125,23 +303,8 @@ local function startAutoDribble()
     dribbleConn = RunService.Heartbeat:Connect(function()
         if not CFG.AutoDribble then return end
         
-        local hasBall = false
-        pcall(function()
-            for _, obj in ipairs(character:GetDescendants()) do
-                if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
-                    hasBall = true
-                    break
-                end
-            end
-        end)
-        
-        if hasBall then
-            if CFG.DribbleSide == "Alternate" then
-                -- Alternate between left and right
-                doDribble(math.random() > 0.5 and "Right" or "Left")
-            else
-                doDribble(CFG.DribbleSide)
-            end
+        if hasBall() then
+            doDribble()
         end
         
         task.wait(CFG.DribbleSpeed)
@@ -156,74 +319,70 @@ local function stopAutoDribble()
 end
 
 -- ═══════════════════════════════════════════
--- AUTO GREEN SHOOTING SYSTEM
+-- SPRINT SYSTEM
+-- ═══════════════════════════════════════════
+local sprintConn = nil
+
+local function doSprint(active)
+    local args = {active and "Mobile" or false}
+    pcall(function()
+        Remotes.Sprint:FireServer(unpack(args))
+    end)
+end
+
+local function startAutoSprint()
+    if sprintConn then sprintConn:Disconnect() end
+    
+    -- Start sprint
+    doSprint(true)
+    
+    sprintConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoSprint then return end
+        -- Keep sprinting
+        doSprint(true)
+    end)
+end
+
+local function stopAutoSprint()
+    if sprintConn then
+        sprintConn:Disconnect()
+        sprintConn = nil
+    end
+    -- Stop sprint
+    doSprint(false)
+end
+
+-- ═══════════════════════════════════════════
+-- SHOOT SYSTEM (Auto Green)
 -- ═══════════════════════════════════════════
 local shootConn = nil
 
--- Calculate perfect power based on distance (Auto Green)
-local function calculateGreenPower(distance)
-    -- Basketball physics approximation
-    -- Perfect arc requires specific power based on distance
-    
-    local power = 0.5 -- Base power
-    
-    if distance < 15 then
-        -- Very close - layup power
-        power = 0.35
-    elseif distance < 25 then
-        -- Close range
-        power = 0.42
-    elseif distance < 35 then
-        -- Mid range
-        power = 0.50
-    elseif distance < 45 then
-        -- Three point line
-        power = 0.58
-    elseif distance < 55 then
-        -- Deep three
-        power = 0.65
-    else
-        -- Half court / deep
-        power = math.clamp(distance / 85, 0.65, 0.85)
-    end
-    
-    -- Small random variation for realism (only if not pure green)
-    if not CFG.AutoGreen then
-        power = power + (math.random(-10, 10) / 1000)
-    end
-    
-    return math.clamp(power, 0.1, 1.0)
-end
-
--- Find nearest hoop with position and height
-local function findNearestHoop()
-    local nearestHoop = nil
-    local nearestDist = math.huge
-    local hoopHeight = 0
-    
-    pcall(function()
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            local name = obj.Name:lower()
-            if name:find("hoop") or name:find("rim") or name:find("basket") or name:find("goal") then
-                if obj:IsA("BasePart") then
-                    local dist = (obj.Position - hrp.Position).Magnitude
-                    if dist < nearestDist then
-                        nearestDist = dist
-                        nearestHoop = obj
-                        hoopHeight = obj.Position.Y
-                    end
-                end
-            end
+local function calculateGreenPower(dist)
+    if CFG.AutoGreen then
+        -- Calculate perfect power
+        if dist < 10 then
+            return 65
+        elseif dist < 20 then
+            return 72
+        elseif dist < 30 then
+            return 78
+        elseif dist < 40 then
+            return 85
+        elseif dist < 50 then
+            return 92
+        else
+            return 100
         end
-    end)
-    
-    return nearestHoop, nearestDist, hoopHeight
+    else
+        return CFG.ShootPower
+    end
 end
 
 local function doShoot(power)
     local args = {
-        power,
-        "Shoot"
+        true,
+        power or CFG.ShootPower,
+        [4] = false
     }
     pcall(function()
         Remotes.Shoot:FireServer(unpack(args))
@@ -236,59 +395,27 @@ local function startAutoShoot()
     shootConn = RunService.Heartbeat:Connect(function()
         if not CFG.AutoShoot then return end
         
-        local hasBall = false
-        pcall(function()
-            for _, obj in ipairs(character:GetDescendants()) do
-                if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
-                    hasBall = true
-                    break
-                end
-            end
-        end)
+        if not hasBall() then return end
         
-        if not hasBall then return end
-        
-        local hoop, distance, hoopHeight = findNearestHoop()
+        local hoop, dist = findNearestHoop()
         if not hoop then return end
         
-        -- Only shoot if in reasonable range (5-70 studs)
-        if distance < 5 or distance > 70 then return end
+        -- Range check
+        if dist < 5 or dist > 60 then return end
         
         -- Calculate power
-        local power
-        if CFG.AutoGreen then
-            -- Perfect calculation for green shots
-            power = calculateGreenPower(distance)
-            
-            -- Adjust for height difference
-            local heightDiff = hoopHeight - hrp.Position.Y
-            if heightDiff > 5 then
-                power = power + 0.05 -- Slightly more power if hoop is higher
-            elseif heightDiff < -5 then
-                power = power - 0.03 -- Slightly less if downhill
-            end
-            
-            -- Perfect timing - small adjustment for exact distance
-            local fineTune = (distance % 10) / 1000
-            power = math.clamp(power + fineTune, 0.1, 1.0)
-        else
-            -- Manual power setting
-            power = CFG.ShootPower
-        end
+        local power = calculateGreenPower(dist)
         
-        -- Check if facing hoop (dot product)
-        local facingHoop = false
+        -- Check facing hoop
+        local facing = false
         pcall(function()
             local toHoop = (hoop.Position - hrp.Position).Unit
-            local lookDir = hrp.CFrame.LookVector
-            local dot = toHoop:Dot(lookDir)
-            facingHoop = dot > 0.5 -- Within ~60 degrees
+            facing = toHoop:Dot(hrp.CFrame.LookVector) > 0.6
         end)
         
-        -- Auto shoot if facing hoop or very close
-        if facingHoop or distance < 15 then
+        if facing or dist < 15 then
             doShoot(power)
-            task.wait(0.8) -- Shot cooldown
+            task.wait(0.8)
         end
     end)
 end
@@ -301,11 +428,9 @@ local function stopAutoShoot()
 end
 
 -- ═══════════════════════════════════════════
--- SPEED BOOST SYSTEM
+-- SPEED BOOST
 -- ═══════════════════════════════════════════
 local speedConn = nil
-local originalSpeed = 16
-local originalJump = 50
 
 local function applySpeedBoost()
     pcall(function()
@@ -318,18 +443,16 @@ end
 
 local function startSpeedBoost()
     if speedConn then speedConn:Disconnect() end
-    
     applySpeedBoost()
     
     speedConn = RunService.Heartbeat:Connect(function()
         if not CFG.SpeedBoost then return end
-        
         pcall(function()
             if humanoid then
-                if humanoid.WalkSpeed < CFG.WalkSpeed then
+                if humanoid.WalkSpeed ~= CFG.WalkSpeed then
                     humanoid.WalkSpeed = CFG.WalkSpeed
                 end
-                if humanoid.JumpPower < CFG.JumpPower then
+                if humanoid.JumpPower ~= CFG.JumpPower then
                     humanoid.JumpPower = CFG.JumpPower
                 end
             end
@@ -342,58 +465,27 @@ local function stopSpeedBoost()
         speedConn:Disconnect()
         speedConn = nil
     end
-    
     pcall(function()
         if humanoid then
-            humanoid.WalkSpeed = originalSpeed
-            humanoid.JumpPower = originalJump
+            humanoid.WalkSpeed = 16
+            humanoid.JumpPower = 50
         end
     end)
 end
 
 -- ═══════════════════════════════════════════
--- NO JUMP COOLDOWN SYSTEM
+-- INFINITE JUMP
 -- ═══════════════════════════════════════════
 local jumpConn = nil
-
-local function disableJumpCooldown()
-    pcall(function()
-        local jumpCooldownScript = LP.PlayerScripts:FindFirstChild("JumpCooldown")
-        if jumpCooldownScript then
-            jumpCooldownScript.Disabled = true
-        end
-        
-        local charJumpScript = character:FindFirstChild("JumpCooldown")
-        if charJumpScript then
-            charJumpScript.Disabled = true
-        end
-    end)
-end
-
-local function enableJumpCooldown()
-    pcall(function()
-        local jumpCooldownScript = LP.PlayerScripts:FindFirstChild("JumpCooldown")
-        if jumpCooldownScript then
-            jumpCooldownScript.Disabled = false
-        end
-    end)
-end
 
 local function startInfJump()
     if jumpConn then jumpConn:Disconnect() end
     
-    disableJumpCooldown()
-    
-    -- Mobile optimized - use jump button detection
     jumpConn = RunService.Heartbeat:Connect(function()
         if not CFG.InfJump then return end
-        
         pcall(function()
-            -- Check if jump is requested and humanoid is on ground
-            if humanoid and humanoid:GetState() == Enum.HumanoidStateType.Running then
-                if humanoid.Jump then
-                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-                end
+            if humanoid and humanoid.Jump then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
             end
         end)
     end)
@@ -404,141 +496,106 @@ local function stopInfJump()
         jumpConn:Disconnect()
         jumpConn = nil
     end
-    
-    enableJumpCooldown()
 end
 
 -- ═══════════════════════════════════════════
--- BALL & HOOP INDICATOR SYSTEM
+-- INDICATORS
 -- ═══════════════════════════════════════════
-local ballIndicatorGui = nil
-local hoopIndicatorGui = nil
+local ballGui, hoopGui = nil, nil
 local indicatorConn = nil
 
-local function createIndicator(name, color, parent)
-    local indicator = Instance.new("Frame")
-    indicator.Name = name
-    indicator.BackgroundColor3 = color
-    indicator.BorderSizePixel = 0
-    indicator.Size = UDim2.new(0, CFG.IndicatorSize, 0, CFG.IndicatorSize)
-    indicator.Position = UDim2.new(0.5, 0, 0.5, 0)
-    indicator.AnchorPoint = Vector2.new(0.5, 0.5)
-    indicator.Parent = parent
+local function startIndicators()
+    if ballGui then ballGui:Destroy() end
+    ballGui = Instance.new("ScreenGui")
+    ballGui.Name = "BallInd"
+    ballGui.ResetOnSpawn = false
+    ballGui.Parent = LP:WaitForChild("PlayerGui")
+    
+    local ballFrame = Instance.new("Frame")
+    ballFrame.Name = "Ball"
+    ballFrame.BackgroundColor3 = CFG.BallColor
+    ballFrame.Size = UDim2.new(0, CFG.IndicatorSize, 0, CFG.IndicatorSize)
+    ballFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    ballFrame.Parent = ballGui
     
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = indicator
+    corner.Parent = ballFrame
     
-    local glow = Instance.new("ImageLabel")
-    glow.Name = "Glow"
-    glow.BackgroundTransparency = 1
-    glow.Image = "rbxassetid://10873939892"
-    glow.ImageColor3 = color
-    glow.ImageTransparency = 0.5
-    glow.Size = UDim2.new(2, 0, 2, 0)
-    glow.Position = UDim2.new(-0.5, 0, -0.5, 0)
-    glow.Parent = indicator
+    if hoopGui then hoopGui:Destroy() end
+    hoopGui = Instance.new("ScreenGui")
+    hoopGui.Name = "HoopInd"
+    hoopGui.ResetOnSpawn = false
+    hoopGui.Parent = LP:WaitForChild("PlayerGui")
     
-    return indicator
-end
-
-local function startIndicators()
-    -- Ball Indicator
-    if ballIndicatorGui then ballIndicatorGui:Destroy() end
-    ballIndicatorGui = Instance.new("ScreenGui")
-    ballIndicatorGui.Name = "BallIndicator"
-    ballIndicatorGui.ResetOnSpawn = false
-    ballIndicatorGui.IgnoreGuiInset = true
-    ballIndicatorGui.Parent = LP:WaitForChild("PlayerGui")
+    local hoopFrame = Instance.new("Frame")
+    hoopFrame.Name = "Hoop"
+    hoopFrame.BackgroundColor3 = CFG.HoopColor
+    hoopFrame.Size = UDim2.new(0, CFG.IndicatorSize + 4, 0, CFG.IndicatorSize + 4)
+    hoopFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+    hoopFrame.Parent = hoopGui
     
-    local ballIndicator = createIndicator("Ball", CFG.IndicatorColor, ballIndicatorGui)
-    
-    -- Hoop Indicator (for shooting guide)
-    if hoopIndicatorGui then hoopIndicatorGui:Destroy() end
-    hoopIndicatorGui = Instance.new("ScreenGui")
-    hoopIndicatorGui.Name = "HoopIndicator"
-    hoopIndicatorGui.ResetOnSpawn = false
-    hoopIndicatorGui.IgnoreGuiInset = true
-    hoopIndicatorGui.Parent = LP:WaitForChild("PlayerGui")
-    
-    local hoopIndicator = createIndicator("Hoop", CFG.HoopColor, hoopIndicatorGui)
+    local hoopCorner = Instance.new("UICorner")
+    hoopCorner.CornerRadius = UDim.new(1, 0)
+    hoopCorner.Parent = hoopFrame
     
     if indicatorConn then indicatorConn:Disconnect() end
-    
     indicatorConn = RunService.RenderStepped:Connect(function()
-        -- Ball Indicator
+        -- Ball
         if CFG.BallIndicator then
             pcall(function()
                 local ball = nil
-                -- Find ball in workspace
                 for _, obj in ipairs(workspace:GetDescendants()) do
-                    if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
-                        if obj:IsA("BasePart") then
-                            ball = obj
-                            break
-                        end
+                    if obj.Name:lower():find("ball") and obj:IsA("BasePart") then
+                        ball = obj
+                        break
                     end
                 end
-                
-                -- Check character
                 if not ball then
                     for _, obj in ipairs(character:GetDescendants()) do
-                        if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                        if obj.Name:lower():find("ball") then
                             ball = obj
                             break
                         end
                     end
                 end
                 
-                if ball and ball:IsA("BasePart") then
-                    local pos, onScreen = camera:WorldToViewportPoint(ball.Position)
-                    if onScreen then
-                        ballIndicator.Visible = true
-                        ballIndicator.Position = UDim2.new(0, pos.X, 0, pos.Y)
-                        
-                        local dist = (ball.Position - camera.CFrame.Position).Magnitude
-                        local scale = math.clamp(1000 / dist, 5, 30)
-                        ballIndicator.Size = UDim2.new(0, scale, 0, scale)
-                    else
-                        ballIndicator.Visible = false
+                if ball then
+                    local pos, on = camera:WorldToViewportPoint(ball.Position)
+                    ballFrame.Visible = on
+                    if on then
+                        ballFrame.Position = UDim2.new(0, pos.X, 0, pos.Y)
                     end
                 else
-                    ballIndicator.Visible = false
+                    ballFrame.Visible = false
                 end
             end)
         else
-            ballIndicator.Visible = false
+            ballFrame.Visible = false
         end
         
-        -- Hoop Indicator (Shooting Guide)
+        -- Hoop
         if CFG.HoopIndicator then
             pcall(function()
-                local hoop, distance = findNearestHoop()
-                if hoop and distance < 100 then
-                    local pos, onScreen = camera:WorldToViewportPoint(hoop.Position)
-                    if onScreen then
-                        hoopIndicator.Visible = true
-                        hoopIndicator.Position = UDim2.new(0, pos.X, 0, pos.Y)
-                        
-                        -- Change color based on if you're in range
-                        if distance > 5 and distance < 70 then
-                            hoopIndicator.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Green (in range)
+                local hoop, dist = findNearestHoop()
+                if hoop and dist < 100 then
+                    local pos, on = camera:WorldToViewportPoint(hoop.Position)
+                    hoopFrame.Visible = on
+                    if on then
+                        hoopFrame.Position = UDim2.new(0, pos.X, 0, pos.Y)
+                        -- Color based on range
+                        if dist > 5 and dist < 60 then
+                            hoopFrame.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Green
                         else
-                            hoopIndicator.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Red (out of range)
+                            hoopFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Red
                         end
-                        
-                        local dist = (hoop.Position - camera.CFrame.Position).Magnitude
-                        local scale = math.clamp(800 / dist, 8, 25)
-                        hoopIndicator.Size = UDim2.new(0, scale, 0, scale)
-                    else
-                        hoopIndicator.Visible = false
                     end
                 else
-                    hoopIndicator.Visible = false
+                    hoopFrame.Visible = false
                 end
             end)
         else
-            hoopIndicator.Visible = false
+            hoopFrame.Visible = false
         end
     end)
 end
@@ -548,51 +605,76 @@ local function stopIndicators()
         indicatorConn:Disconnect()
         indicatorConn = nil
     end
-    if ballIndicatorGui then
-        ballIndicatorGui:Destroy()
-        ballIndicatorGui = nil
-    end
-    if hoopIndicatorGui then
-        hoopIndicatorGui:Destroy()
-        hoopIndicatorGui = nil
-    end
+    if ballGui then ballGui:Destroy() end
+    if hoopGui then hoopGui:Destroy() end
+    ballGui, hoopGui = nil, nil
 end
 
 -- ═══════════════════════════════════════════
--- MOBILE OPTIMIZED UI
+-- UI SETUP
 -- ═══════════════════════════════════════════
 
--- Main Tab - Dribble
-local MN_L = Tabs.Main:AddLeftGroupbox("Auto Dribble")
-local MN_R = Tabs.Main:AddRightGroupbox("Dribble Settings")
+-- Main Tab
+local MN_L = Tabs.Main:AddLeftGroupbox("Auto Actions")
+local MN_R = Tabs.Main:AddRightGroupbox("Manual Actions")
 
-MN_L:AddToggle("AutoDribble", {
+MN_L:AddToggle("AutoDunk", {
+    Text = "Auto Dunk (Near Hoop)",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoDunk = v
+        if v then startAutoDunk() else stopAutoDunk() end
+    end
+})
+
+MN_L:AddToggle("AutoPumpfake", {
+    Text = "Auto Pumpfake",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoPumpfake = v
+        if v then startAutoPumpfake() else stopAutoPumpfake() end
+    end
+})
+
+MN_L:AddToggle("AutoPass", {
+    Text = "Auto Pass (To Teammate)",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoPass = v
+        if v then startAutoPass() else stopAutoPass() end
+    end
+})
+
+MN_R:AddButton({Text = "Dunk Now", Func = doDunk})
+MN_R:AddButton({Text = "Pumpfake Now", Func = doPumpfake})
+MN_R:AddButton({Text = "Pass Now", Func = doPass})
+
+-- Dribble Tab
+local DR_L = Tabs.Dribble:AddLeftGroupbox("Auto Dribble")
+local DR_R = Tabs.Dribble:AddRightGroupbox("Dribble Settings")
+
+DR_L:AddToggle("AutoDribble", {
     Text = "Auto Dribble",
     Default = false,
     Callback = function(v)
         CFG.AutoDribble = v
-        if v then
-            startAutoDribble()
-            Library:Notify("Auto Dribble enabled", 2)
-        else
-            stopAutoDribble()
-        end
+        if v then startAutoDribble() else stopAutoDribble() end
     end
 })
 
-MN_L:AddDropdown("DribbleSide", {
-    Text = "Dribble Side",
-    Default = "Right",
-    Values = {"Right", "Left", "Alternate"},
+DR_L:AddDropdown("DribbleMove", {
+    Text = "Dribble Move",
+    Default = "X",
+    Values = {"X", "V", "C"},
     Callback = function(v)
-        CFG.DribbleSide = v
+        CFG.DribbleMove = v
     end
 })
 
-MN_R:AddSlider("DribbleSpeed", {
+DR_R:AddSlider("DribbleSpeed", {
     Text = "Dribble Speed",
-    Default = 0.15,
-    Min = 0.05,
+    Default = 0.2,
+    Min = 0.1,
     Max = 0.5,
     Rounding = 2,
     Callback = function(v)
@@ -600,90 +682,64 @@ MN_R:AddSlider("DribbleSpeed", {
     end
 })
 
-MN_R:AddButton({
-    Text = "Dribble Right",
-    Func = function()
-        doDribble("Right")
-    end
-})
+DR_R:AddButton({Text = "Dribble X", Func = function() doDribble("X") end})
+DR_R:AddButton({Text = "Dribble V", Func = function() doDribble("V") end})
+DR_R:AddButton({Text = "Dribble C", Func = function() doDribble("C") end})
 
-MN_R:AddButton({
-    Text = "Dribble Left",
-    Func = function()
-        doDribble("Left")
-    end
-})
-
--- Shooting Tab - Auto Green Focus
+-- Shooting Tab
 local SH_L = Tabs.Shooting:AddLeftGroupbox("Auto Shoot")
-local SH_R = Tabs.Shooting:AddRightGroupbox("Auto Green Settings")
+local SH_R = Tabs.Shooting:AddRightGroupbox("Settings")
 
 SH_L:AddToggle("AutoShoot", {
     Text = "Auto Shoot",
     Default = false,
     Callback = function(v)
         CFG.AutoShoot = v
-        if v then
-            startAutoShoot()
-            Library:Notify("Auto Shoot enabled", 2)
-        else
-            stopAutoShoot()
-        end
+        if v then startAutoShoot() else stopAutoShoot() end
     end
 })
 
--- NEW: Auto Green Toggle
 SH_L:AddToggle("AutoGreen", {
-    Text = "Auto Green (Never Miss)",
+    Text = "Auto Green (Perfect)",
     Default = false,
     Callback = function(v)
         CFG.AutoGreen = v
-        if v then
-            Library:Notify("Auto Green enabled - Perfect shots every time!", 3)
-        else
-            Library:Notify("Auto Green disabled - Using manual power", 2)
-        end
+        Library:Notify(v and "Auto Green ON - Never Miss!" or "Auto Green OFF", 2)
     end
 })
 
-SH_L:AddLabel("Auto Green calculates perfect power based on distance")
-
 SH_R:AddSlider("ShootPower", {
     Text = "Manual Power",
-    Default = 0.5,
-    Min = 0.1,
-    Max = 1.0,
-    Rounding = 2,
+    Default = 100,
+    Min = 50,
+    Max = 100,
+    Rounding = 0,
     Callback = function(v)
         CFG.ShootPower = v
     end
 })
 
-SH_R:AddLabel("Only used when Auto Green is OFF")
-
-SH_R:AddButton({
-    Text = "Manual Shoot",
-    Func = function()
-        local power = CFG.AutoGreen and calculateGreenPower(30) or CFG.ShootPower
-        doShoot(power)
-    end
-})
+SH_R:AddButton({Text = "Shoot Now", Func = function() doShoot(CFG.ShootPower) end})
 
 -- Movement Tab
-local MV_L = Tabs.Movement:AddLeftGroupbox("Speed Boost")
-local MV_R = Tabs.Movement:AddRightGroupbox("Jump Settings")
+local MV_L = Tabs.Movement:AddLeftGroupbox("Sprint & Speed")
+local MV_R = Tabs.Movement:AddRightGroupbox("Jump")
+
+MV_L:AddToggle("AutoSprint", {
+    Text = "Auto Sprint",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoSprint = v
+        if v then startAutoSprint() else stopAutoSprint() end
+    end
+})
 
 MV_L:AddToggle("SpeedBoost", {
     Text = "Speed Boost",
     Default = false,
     Callback = function(v)
         CFG.SpeedBoost = v
-        if v then
-            startSpeedBoost()
-            Library:Notify("Speed Boost enabled", 2)
-        else
-            stopSpeedBoost()
-        end
+        if v then startSpeedBoost() else stopSpeedBoost() end
     end
 })
 
@@ -695,37 +751,6 @@ MV_L:AddSlider("WalkSpeed", {
     Rounding = 0,
     Callback = function(v)
         CFG.WalkSpeed = v
-        if CFG.SpeedBoost then
-            applySpeedBoost()
-        end
-    end
-})
-
-MV_L:AddSlider("JumpPower", {
-    Text = "Jump Power",
-    Default = 50,
-    Min = 50,
-    Max = 150,
-    Rounding = 0,
-    Callback = function(v)
-        CFG.JumpPower = v
-        if CFG.SpeedBoost then
-            applySpeedBoost()
-        end
-    end
-})
-
-MV_R:AddToggle("NoJumpCooldown", {
-    Text = "No Jump Cooldown",
-    Default = false,
-    Callback = function(v)
-        CFG.NoJumpCooldown = v
-        if v then
-            disableJumpCooldown()
-            Library:Notify("Jump Cooldown disabled", 2)
-        else
-            enableJumpCooldown()
-        end
     end
 })
 
@@ -734,16 +759,11 @@ MV_R:AddToggle("InfJump", {
     Default = false,
     Callback = function(v)
         CFG.InfJump = v
-        if v then
-            startInfJump()
-            Library:Notify("Infinite Jump enabled", 2)
-        else
-            stopInfJump()
-        end
+        if v then startInfJump() else stopInfJump() end
     end
 })
 
--- Visuals Tab - Mobile Optimized
+-- Visuals Tab
 local VS_L = Tabs.Visuals:AddLeftGroupbox("Indicators")
 
 VS_L:AddToggle("BallIndicator", {
@@ -751,33 +771,24 @@ VS_L:AddToggle("BallIndicator", {
     Default = false,
     Callback = function(v)
         CFG.BallIndicator = v
-        if v or CFG.HoopIndicator then
-            startIndicators()
-        elseif not CFG.BallIndicator and not CFG.HoopIndicator then
-            stopIndicators()
-        end
+        if v or CFG.HoopIndicator then startIndicators() 
+        elseif not CFG.BallIndicator and not CFG.HoopIndicator then stopIndicators() end
     end
 })
 
--- NEW: Hoop Indicator
 VS_L:AddToggle("HoopIndicator", {
-    Text = "Hoop Indicator (Shooting Guide)",
+    Text = "Hoop Indicator",
     Default = false,
     Callback = function(v)
         CFG.HoopIndicator = v
-        if v or CFG.BallIndicator then
-            startIndicators()
-        elseif not CFG.BallIndicator and not CFG.HoopIndicator then
-            stopIndicators()
-        end
+        if v or CFG.BallIndicator then startIndicators()
+        elseif not CFG.BallIndicator and not CFG.HoopIndicator then stopIndicators() end
     end
 })
 
-VS_L:AddLabel("Green = In range, Red = Too far/close")
-
 VS_L:AddSlider("IndicatorSize", {
-    Text = "Indicator Size",
-    Default = 10,
+    Text = "Size",
+    Default = 12,
     Min = 5,
     Max = 30,
     Rounding = 0,
@@ -786,67 +797,46 @@ VS_L:AddSlider("IndicatorSize", {
     end
 })
 
-VS_L:AddLabel("Ball Color"):AddColorPicker("BallColor", {
-    Default = Color3.fromRGB(255, 255, 0),
-    Callback = function(v)
-        CFG.IndicatorColor = v
-    end
-})
-
-VS_L:AddLabel("Hoop Color"):AddColorPicker("HoopColor", {
-    Default = Color3.fromRGB(0, 255, 0),
-    Callback = function(v)
-        CFG.HoopColor = v
-    end
-})
-
 -- Settings Tab
-local ST_R = Tabs.Settings:AddRightGroupbox("Stop All")
+local ST_R = Tabs.Settings:AddRightGroupbox("Controls")
 
 ST_R:AddButton({
-    Text = "Stop All Features",
+    Text = "Stop All",
     Func = function()
+        CFG.AutoDunk = false
+        CFG.AutoPumpfake = false
+        CFG.AutoPass = false
         CFG.AutoDribble = false
+        CFG.AutoSprint = false
         CFG.AutoShoot = false
-        CFG.AutoGreen = false
         CFG.SpeedBoost = false
-        CFG.NoJumpCooldown = false
         CFG.InfJump = false
         CFG.BallIndicator = false
         CFG.HoopIndicator = false
         
+        stopAutoDunk()
+        stopAutoPumpfake()
+        stopAutoPass()
         stopAutoDribble()
+        stopAutoSprint()
         stopAutoShoot()
         stopSpeedBoost()
         stopInfJump()
         stopIndicators()
-        enableJumpCooldown()
         
-        pcall(function()
-            if humanoid then
-                humanoid.WalkSpeed = originalSpeed
-                humanoid.JumpPower = originalJump
-            end
-        end)
-        
-        Library:Notify("All features stopped", 3)
+        Library:Notify("All stopped", 3)
     end
 })
 
-ST_R:AddButton({
-    Text = "Unload UI",
-    Func = function()
-        Library:Unload()
-    end
-})
+ST_R:AddButton({Text = "Unload", Func = function() Library:Unload() end})
 
--- Theme & Save Manager
+-- Theme & Save
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
 SaveManager:SetIgnoreIndexes({})
-ThemeManager:SetFolder("BasketballToolMobile")
-SaveManager:SetFolder("BasketballToolMobile")
+ThemeManager:SetFolder("BasketballToolV2")
+SaveManager:SetFolder("BasketballToolV2")
 SaveManager:BuildConfigSection(Tabs.Settings)
 ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
@@ -854,7 +844,7 @@ SaveManager:LoadAutoloadConfig()
 -- ═══════════════════════════════════════════
 -- LOAD COMPLETE
 -- ═══════════════════════════════════════════
-Library:Notify("Basketball Tool Mobile loaded!", 5)
-print("[BASKETBALL TOOL MOBILE] Loaded")
-print("[AUTO GREEN] Enabled - Perfect shot calculation active")
-print("[MOBILE] Keybinds removed, touch optimized")
+Library:Notify("Basketball Tool V2 Loaded!", 5)
+print("[BB TOOL V2] Loaded")
+print("[Remotes] Dunk, Pumpfake, Pass, Sprint, Dribble, Shoot")
+print("[Auto Green] Perfect shot calculation ready")
