@@ -1,1133 +1,860 @@
 --[[
-    RIVALS VOID PREMIUM v1.0 — nfpw UI Edition
-    Premium voidspam tool — Rivals specific
-    Mobile + PC compatible
-    Clean rewrite of Apex V3 void logic
+    BASKETBALL TOOL — Mobile Edition
+    Features: Auto Dribble, Auto Green (Perfect Shots), Speed Boost, No Jump Cooldown, Ball Indicator
+    Removed: Keybinds (Mobile Optimized)
 ]]
 
 -- ═══════════════════════════════════════════
 -- SERVICES
 -- ═══════════════════════════════════════════
-local Players    = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS        = game:GetService("UserInputService")
-local Lighting   = game:GetService("Lighting")
-local Debris     = game:GetService("Debris")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService        = game:GetService("RunService")
+local StarterPlayer     = game:GetService("StarterPlayer")
+local TweenService      = game:GetService("TweenService")
 
 local LP       = Players.LocalPlayer
-local IsMobile = UIS.TouchEnabled and not UIS.KeyboardEnabled
 local camera   = workspace.CurrentCamera
+local IsMobile = true -- Force mobile mode
 
 -- ═══════════════════════════════════════════
--- CHARACTER
+-- LINORIA LIBRARY
 -- ═══════════════════════════════════════════
-local character        = LP.Character or LP.CharacterAdded:Wait()
-local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
-local humanoid         = character:WaitForChild("Humanoid")
+local repo         = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+Library.ShowToggleFrameInKeybinds = true
+
+local Window = Library:CreateWindow({
+    Title                = "Basketball Tool Mobile",
+    Center               = true,
+    AutoShow             = true,
+    Resizable            = true,
+    ShowCustomCursor     = false,
+    UnlockMouseWhileOpen = true,
+    NotifySide           = "Left",
+    TabPadding           = 8,
+    MenuFadeTime         = 0.2,
+    Size                 = UDim2.fromOffset(480, 480),
+})
+
+local Tabs = {
+    Main        = Window:AddTab("Main"),
+    Shooting    = Window:AddTab("Shooting"),
+    Movement    = Window:AddTab("Movement"),
+    Visuals     = Window:AddTab("Visuals"),
+    Settings    = Window:AddTab("Settings"),
+}
 
 -- ═══════════════════════════════════════════
--- CONFIG
+-- CONFIGURATION
 -- ═══════════════════════════════════════════
 local CFG = {
-    -- Void Core
-    Void = {
-        On           = false,
-        Method       = "Quantum Tunneling",
-        BypassMode   = "Extreme Networking",
-        YBase        = 1e10 + (math.random() * 10e9 - 5e9) + 7369123,
-        DriftSpeed   = 9e6,
-        DriftChaos   = 0.98,
-        YDriftSpeed  = 4e6,
-        YDriftRange  = 2e9,
-        Scramble     = true,
-        ScrambleTime = 1.2,
-    },
-
-    -- Void Evasion
-    Evade = {
-        On       = true,
-        Radius   = 8e9,
-        Speed    = 6e9,
-        Cooldown = 0.05,
-        Vertical = 3e9,
-        VertBias = 0.5,
-        ForceUp  = false,
-    },
-
-    -- Lissajous params
-    LissajousA = 2,
-    LissajousB = 3,
-
-    -- Gravity Well
-    GravityStr = 1e8,
-
-    -- Flicker
-    FlickerInterval = 0.05,
-
-    -- Desync
-    Desync = {
-        On          = true,
-        Tick        = 0.18,
-        SpoofY      = 3,
-        Radius      = 22,
-        WanderSpeed = 3.5,
-        WanderChaos = 0.4,
-    },
-
-    -- Kill Notifier
-    KillNotifier = true,
-    KillSound    = true,
+    AutoDribble     = false,
+    DribbleSide     = "Right",
+    DribbleSpeed    = 0.15,
+    
+    AutoShoot       = false,
+    AutoGreen       = false, -- NEW: Perfect shot calculation
+    ShootPower      = 0.5,
+    
+    SpeedBoost      = false,
+    WalkSpeed       = 16,
+    JumpPower       = 50,
+    
+    NoJumpCooldown  = false,
+    InfJump         = false,
+    
+    BallIndicator   = false,
+    HoopIndicator   = false, -- NEW: Shows where to shoot
+    IndicatorSize   = 10,
+    IndicatorColor  = Color3.fromRGB(255, 255, 0),
+    HoopColor       = Color3.fromRGB(0, 255, 0),
 }
 
 -- ═══════════════════════════════════════════
--- MOBILE SCREEN SIZE PROMPT
+-- REMOTES
 -- ═══════════════════════════════════════════
-local stored_fonts = {}
-for _, v in Enum.Font:GetEnumItems() do
-    table.insert(stored_fonts, v.Name)
-end
-
-local screenSize = nil
-if IsMobile then
-    local promptDone = false
-
-    local sizeGui = Instance.new("ScreenGui")
-    sizeGui.Name = "SizePrompt"
-    sizeGui.ResetOnSpawn = false
-    sizeGui.IgnoreGuiInset = true
-    sizeGui.Parent = LP:WaitForChild("PlayerGui")
-
-    local frame = Instance.new("Frame", sizeGui)
-    frame.Size = UDim2.new(0, 280, 0, 160)
-    frame.Position = UDim2.new(0.5, -140, 0.5, -80)
-    frame.BackgroundColor3 = Color3.fromRGB(12, 12, 18)
-    frame.BorderSizePixel = 0
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
-
-    local title = Instance.new("TextLabel", frame)
-    title.Size = UDim2.new(1, 0, 0, 40)
-    title.BackgroundTransparency = 1
-    title.Text = "What device are you on?"
-    title.TextColor3 = Color3.fromRGB(220, 220, 230)
-    title.Font = Enum.Font.GothamBold
-    title.TextSize = 14
-
-    local phoneBtn = Instance.new("TextButton", frame)
-    phoneBtn.Size = UDim2.new(0, 110, 0, 40)
-    phoneBtn.Position = UDim2.new(0, 15, 0, 55)
-    phoneBtn.BackgroundColor3 = Color3.fromRGB(120, 80, 255)
-    phoneBtn.BorderSizePixel = 0
-    phoneBtn.Text = "📱 Phone"
-    phoneBtn.TextColor3 = Color3.new(1, 1, 1)
-    phoneBtn.Font = Enum.Font.GothamBold
-    phoneBtn.TextSize = 13
-    Instance.new("UICorner", phoneBtn).CornerRadius = UDim.new(0, 6)
-
-    local tabletBtn = Instance.new("TextButton", frame)
-    tabletBtn.Size = UDim2.new(0, 110, 0, 40)
-    tabletBtn.Position = UDim2.new(0, 145, 0, 55)
-    tabletBtn.BackgroundColor3 = Color3.fromRGB(60, 130, 255)
-    tabletBtn.BorderSizePixel = 0
-    tabletBtn.Text = "📲 Tablet"
-    tabletBtn.TextColor3 = Color3.new(1, 1, 1)
-    tabletBtn.Font = Enum.Font.GothamBold
-    tabletBtn.TextSize = 13
-    Instance.new("UICorner", tabletBtn).CornerRadius = UDim.new(0, 6)
-
-    local note = Instance.new("TextLabel", frame)
-    note.Size = UDim2.new(1, 0, 0, 30)
-    note.Position = UDim2.new(0, 0, 0, 110)
-    note.BackgroundTransparency = 1
-    note.Text = "This adjusts the UI size for your screen"
-    note.TextColor3 = Color3.fromRGB(110, 110, 130)
-    note.Font = Enum.Font.Gotham
-    note.TextSize = 10
-
-    phoneBtn.MouseButton1Click:Connect(function()
-        screenSize = "phone"
-        promptDone = true
-    end)
-    tabletBtn.MouseButton1Click:Connect(function()
-        screenSize = "tablet"
-        promptDone = true
-    end)
-
-    while not promptDone do
-        task.wait(0.05)
-    end
-    sizeGui:Destroy()
-end
-
--- ═══════════════════════════════════════════
--- GUI CONFIG + LIBRARY LOAD
--- ═══════════════════════════════════════════
-local gui_config = {
-    Color        = Color3.fromRGB(120, 80, 255),
-    Keybind      = Enum.KeyCode.Insert,
-    MinHeight    = 100,
-    MaxHeight    = screenSize == "phone" and 480 or 700,
-    InitialHeight= screenSize == "phone" and 360 or 520,
-    MinWidth     = screenSize == "phone" and 260 or 300,
-    MaxWidth     = screenSize == "phone" and 420 or 800,
-    InitialWidth = screenSize == "phone" and 300 or 560,
-}
-
-local library = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/nfpw/XXSCRIPT/refs/heads/main/Library/Module.lua"
-))()
-local window = library:CreateWindow(gui_config, gethui())
-library:SetWindowName("Rivals Void Premium v1.0")
-
--- ═══════════════════════════════════════════
--- TABS
--- ═══════════════════════════════════════════
-local tabs = {
-    void     = window:CreateTab("Void"),
-    desync   = window:CreateTab("Desync"),
-    evasion  = window:CreateTab("Evasion"),
-    notifier = window:CreateTab("Notifier"),
-    settings = window:CreateTab("Settings"),
+local Remotes = {
+    Dribble = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Dribble"),
+    Shoot   = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Shoot"),
 }
 
 -- ═══════════════════════════════════════════
--- VOID STATE
+-- CHARACTER SETUP
 -- ═══════════════════════════════════════════
-local VoidState = {
-    -- Position tracking
-    X            = (math.random() - 0.5) * 2e8,
-    Z            = (math.random() - 0.5) * 2e8,
-    YOffset      = 0,
-    YDir         = 1,
-    DirX         = math.random() * 2 - 1,
-    DirZ         = math.random() * 2 - 1,
-    IntendedPos  = Vector3.zero,
+local character = LP.Character or LP.CharacterAdded:Wait()
+local humanoid  = character:WaitForChild("Humanoid")
+local hrp       = character:WaitForChild("HumanoidRootPart")
 
-    -- Timers
-    Elapsed      = 0,
-    EvadeCooldown= 0,
-    DesyncTimer  = 0,
-    ScrambleTimer= 0,
-
-    -- Desync
-    SpoofAngle   = math.random() * math.pi * 2,
-    SpoofDir     = (math.random() > 0.5) and 1 or -1,
-    SpoofBaseX   = 0,
-    SpoofBaseZ   = 0,
-    FakeGroundPos= Vector3.zero,
-    GroundY      = 0,
-    GroundUpdateT= 0,
-
-    -- Flags
-    InFlicker    = false,
-    Active       = false,
-    Conn         = nil,
-}
+LP.CharacterAdded:Connect(function(nc)
+    character = nc
+    humanoid  = nc:WaitForChild("Humanoid")
+    hrp       = nc:WaitForChild("HumanoidRootPart")
+    
+    if CFG.SpeedBoost then
+        task.wait(0.5)
+        applySpeedBoost()
+    end
+end)
 
 -- ═══════════════════════════════════════════
--- HELPERS
+-- UTILITY FUNCTIONS
 -- ═══════════════════════════════════════════
-local function clamp(x, a, b)
-    return x < a and a or x > b and b or x
-end
-
-local function getHRP()
-    local c = LP.Character
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-
-local function getHum()
-    local c = LP.Character
-    return c and c:FindFirstChildOfClass("Humanoid")
+local function getScreenCenter()
+    return Vector2.new(camera.ViewportSize.X / 2, camera.ViewportSize.Y / 2)
 end
 
 -- ═══════════════════════════════════════════
--- VOID DRIFT — Perlin noise based direction
--- Fractal layered noise for organic unpredictability
+-- DRIBBLE SYSTEM
 -- ═══════════════════════════════════════════
-local function computeDriftDir(t)
-    local nx, nz = 0, 0
-    local amp, freq = 1, 0.0001
+local dribbleConn = nil
 
-    -- 4 octaves of fractal noise for smooth organic direction
-    for _ = 1, 4 do
-        nx = nx + math.noise(t * freq, 0) * amp
-        nz = nz + math.noise(0, t * freq) * amp
-        freq = freq * 2.37
-        amp  = amp  * 0.5
-    end
-
-    -- Low freq wander layer
-    local sp = t * 0.00073
-    nx = nx + math.noise(sp + 13.7,  7.3) * 0.3
-    nz = nz + math.noise(sp + 31.1, 17.9) * 0.3
-
-    -- Circular perturbation to prevent straight-line drift
-    local cp = t * 0.00213
-    nx = nx + math.sin(cp) * math.cos(cp * 1.618) * 0.2
-    nz = nz + math.cos(cp * 0.618) * math.sin(cp * 2.718) * 0.2
-
-    local len = math.sqrt(nx * nx + nz * nz)
-    if len < 0.001 then
-        local a = t * math.pi * 0.1
-        return math.cos(a), math.sin(a)
-    end
-    return nx / len, nz / len
-end
-
--- ═══════════════════════════════════════════
--- VOID METHOD — position computation per method
--- ═══════════════════════════════════════════
-local function computeVoidPosition(dt)
-    local t  = VoidState.Elapsed
-    local bY = CFG.Void.YBase + VoidState.YOffset
-    local m  = CFG.Void.Method
-
-    -- Stable: no movement
-    if m == "Stable" then
-        return Vector3.new(VoidState.X, bY, VoidState.Z)
-
-    -- Drift: fractal noise driven movement
-    elseif m == "Drift" then
-        local dx, dz = computeDriftDir(t)
-        VoidState.DirX = VoidState.DirX + (dx - VoidState.DirX) * CFG.Void.DriftChaos * dt * 10
-        VoidState.DirZ = VoidState.DirZ + (dz - VoidState.DirZ) * CFG.Void.DriftChaos * dt * 10
-        VoidState.X    = VoidState.X + VoidState.DirX * CFG.Void.DriftSpeed * dt
-        VoidState.Z    = VoidState.Z + VoidState.DirZ * CFG.Void.DriftSpeed * dt
-        VoidState.YOffset = VoidState.YOffset + VoidState.YDir * CFG.Void.YDriftSpeed * dt
-        if math.abs(VoidState.YOffset) >= CFG.Void.YDriftRange then
-            VoidState.YDir = -VoidState.YDir
-        end
-        return Vector3.new(VoidState.X, CFG.Void.YBase + VoidState.YOffset, VoidState.Z)
-
-    -- Chaotic: fully random step each frame
-    elseif m == "Chaotic" then
-        VoidState.X       = VoidState.X + (math.random() - 0.5) * CFG.Void.DriftSpeed * dt * 5
-        VoidState.Z       = VoidState.Z + (math.random() - 0.5) * CFG.Void.DriftSpeed * dt * 5
-        VoidState.YOffset = VoidState.YOffset + (math.random() - 0.5) * CFG.Void.YDriftSpeed * dt * 5
-        return Vector3.new(VoidState.X, CFG.Void.YBase + VoidState.YOffset, VoidState.Z)
-
-    -- Circle: constant radius circular orbit
-    elseif m == "Circle" then
-        local r = 1e9
-        return Vector3.new(
-            VoidState.X + math.cos(t * 2) * r,
-            bY,
-            VoidState.Z + math.sin(t * 2) * r
-        )
-
-    -- Spiral: expanding radius circle
-    elseif m == "Spiral" then
-        local r = 1e9 * (1 + math.sin(t))
-        return Vector3.new(
-            VoidState.X + math.cos(t * 3) * r,
-            bY,
-            VoidState.Z + math.sin(t * 3) * r
-        )
-
-    -- Lissajous: XZ phase-offset figure pattern
-    elseif m == "Lissajous" then
-        local r = 2e9
-        return Vector3.new(
-            VoidState.X + math.sin(t * CFG.LissajousA) * r,
-            bY,
-            VoidState.Z + math.sin(t * CFG.LissajousB) * r
-        )
-
-    -- Perlin Noise: smooth noise driven XZ
-    elseif m == "Perlin Noise" then
-        local nt = t * 0.1
-        return Vector3.new(
-            VoidState.X + math.noise(nt, 0) * 5e9,
-            bY,
-            VoidState.Z + math.noise(0, nt) * 5e9
-        )
-
-    -- Flicker: alternates between two far positions
-    elseif m == "Flicker" then
-        local flip = (tick() % (CFG.FlickerInterval * 2) < CFG.FlickerInterval)
-        return flip
-            and Vector3.new(VoidState.X, CFG.Void.YBase, VoidState.Z)
-            or  Vector3.new(-VoidState.X, CFG.Void.YBase + 1e9, -VoidState.Z)
-
-    -- Gravity Well: circular orbit with sine amplitude modulation
-    elseif m == "Gravity Well" then
-        local gt = t * 0.5
-        local r  = CFG.GravityStr * (1 + math.sin(gt))
-        return Vector3.new(
-            VoidState.X + math.cos(gt) * r,
-            bY + math.sin(gt * 0.7) * r,
-            VoidState.Z + math.sin(gt) * r
-        )
-
-    -- Helix: circle + vertical sine wave
-    elseif m == "Helix" then
-        local r  = 1e9
-        local ht = t * 2
-        return Vector3.new(
-            VoidState.X + math.cos(ht) * r,
-            bY + math.sin(ht * 0.5) * r,
-            VoidState.Z + math.sin(ht) * r
-        )
-
-    -- Figure 8: lemniscate
-    elseif m == "Figure 8" then
-        local r  = 1.5e9
-        local ft = t * 1.5
-        return Vector3.new(
-            VoidState.X + math.sin(ft) * r,
-            bY,
-            VoidState.Z + math.sin(ft) * math.cos(ft) * r
-        )
-
-    -- Tornado: expanding radius with fast rotation
-    elseif m == "Tornado" then
-        local r  = 2e9 * math.abs(math.sin(t))
-        local tt = t * 5
-        return Vector3.new(
-            VoidState.X + math.cos(tt) * r,
-            bY + math.sin(t * 2) * 1e9,
-            VoidState.Z + math.sin(tt) * r
-        )
-
-    -- Butterfly: parametric butterfly curve in 3D
-    elseif m == "Butterfly" then
-        local r = (math.exp(math.sin(t)) - 2 * math.cos(4 * t)
-                  + math.sin((2 * t - math.pi) / 24) ^ 5) * 5e8
-        return Vector3.new(
-            VoidState.X + math.sin(t) * r,
-            bY + math.cos(t) * r,
-            VoidState.Z + math.sin(t * 0.5) * r
-        )
-
-    -- Double Helix: alternating sign helix
-    elseif m == "Double Helix" then
-        local r   = 1e9
-        local dht = t * 3
-        local off = (tick() % 1 < 0.5) and 1 or -1
-        return Vector3.new(
-            VoidState.X + math.cos(dht) * r * off,
-            bY + math.sin(dht) * 5e8,
-            VoidState.Z + math.sin(dht) * r * off
-        )
-
-    -- Chaotic Sphere: spherical parametric with two independent time vars
-    elseif m == "Chaotic Sphere" then
-        local r  = 2e9
-        local t1 = t * 2
-        local t2 = t * 1.3
-        return Vector3.new(
-            VoidState.X + math.sin(t1) * math.cos(t2) * r,
-            bY + math.sin(t1) * math.sin(t2) * r,
-            VoidState.Z + math.cos(t1) * r
-        )
-
-    -- Quantum Tunneling: random large teleport jumps
-    -- Most effective for Rivals — unpredictable server reconciliation
-    elseif m == "Quantum Tunneling" then
-        local sign = math.random() > 0.5 and 1 or -1
-        local r    = 1e11 * sign
-        local jitter = Vector3.new(
-            (math.random() - 0.5) * 2e9,
-            (math.random() - 0.5) * 2e8,
-            (math.random() - 0.5) * 2e9
-        )
-        return Vector3.new(VoidState.X + r, bY + jitter.Y, VoidState.Z + r) + jitter
-
-    -- Fractal Desync: additive sine harmonics — complex waveform
-    elseif m == "Fractal Desync" then
-        local ft = t * 5
-        local x  = math.sin(ft) + math.sin(ft * 2.1) / 2 + math.sin(ft * 3.2) / 4
-        local z  = math.cos(ft) + math.cos(ft * 2.2) / 2 + math.cos(ft * 3.1) / 4
-        return Vector3.new(
-            VoidState.X + x * 1e10,
-            bY + math.sin(ft * 10) * 1e9,
-            VoidState.Z + z * 1e10
-        )
-
-    -- Extreme Desync: very fast large amplitude trig
-    elseif m == "Extreme Desync" then
-        local et = t * 15
-        local r  = 1e12
-        return Vector3.new(
-            VoidState.X + math.sin(et) * r,
-            bY + math.cos(et * 1.5) * r * 0.1,
-            VoidState.Z + math.cos(et) * r
-        )
-
-    -- Quantum Oscillation: extremely fast oscillation
-    elseif m == "Quantum Oscillation" then
-        local qt = t * 50
-        local r  = 1e11 * math.sin(qt)
-        return Vector3.new(
-            VoidState.X + r,
-            bY + math.cos(qt) * 1e10,
-            VoidState.Z + r
-        )
-
-    -- Frame Skip: flips between far position and base every ~5 frames
-    elseif m == "Frame Skip" then
-        if tick() % 0.1 < 0.05 then
-            return Vector3.new(VoidState.X * 2, bY + 1e11, VoidState.Z * 2)
-        end
-        return Vector3.new(VoidState.X, bY, VoidState.Z)
-    end
-
-    -- Fallback
-    return Vector3.new(VoidState.X, bY, VoidState.Z)
-end
-
--- ═══════════════════════════════════════════
--- GROUND Y SCAN
--- Used so desync spoof appears to be on the map
--- ═══════════════════════════════════════════
-local function updateGroundY()
-    local rp = RaycastParams.new()
-    rp.FilterType = Enum.RaycastFilterType.Exclude
-    if LP.Character then
-        rp.FilterDescendantsInstances = { LP.Character }
-    end
-    local result = workspace:Raycast(Vector3.new(0, 1000, 0), Vector3.new(0, -2000, 0), rp)
-    if result then
-        VoidState.GroundY = result.Position.Y + 3
-    end
-end
-
--- ═══════════════════════════════════════════
--- DESYNC SPOOF POSITION
--- Wanders near character's real XZ, but Y = ground
--- Server sees brief ground-level position during flicker
--- ═══════════════════════════════════════════
-local function stepSpoofPosition(dt)
-    -- Lazy ground refresh every 5 seconds
-    VoidState.GroundUpdateT = VoidState.GroundUpdateT + dt
-    if VoidState.GroundUpdateT > 5 then
-        VoidState.GroundUpdateT = 0
-        task.spawn(updateGroundY)
-    end
-
-    local nv = math.noise(VoidState.Elapsed * 0.8, 42.0)
-    VoidState.SpoofAngle = VoidState.SpoofAngle
-        + VoidState.SpoofDir
-        * (1.5 + nv * CFG.Desync.WanderChaos)
-        * CFG.Desync.WanderSpeed * dt
-
-    -- Randomly reverse wander direction
-    if math.noise(VoidState.Elapsed * 0.3, 7.7) > 0.6 then
-        VoidState.SpoofDir = -VoidState.SpoofDir
-    end
-
-    local r = CFG.Desync.Radius * (0.5 + 0.5 * math.abs(math.noise(VoidState.Elapsed * 0.5, 0)))
-
-    VoidState.FakeGroundPos = Vector3.new(
-        VoidState.SpoofBaseX + math.cos(VoidState.SpoofAngle) * r,
-        VoidState.GroundY,
-        VoidState.SpoofBaseZ + math.sin(VoidState.SpoofAngle) * r
-    )
-end
-
--- ═══════════════════════════════════════════
--- DESYNC FLICKER
--- Briefly teleports HRP to ground-level spoof position
--- Server registers a "valid" ground position → hitbox splits
--- Immediately returns to void on next frame
--- ═══════════════════════════════════════════
-local function runDesyncFlicker()
-    if VoidState.InFlicker then return end
-    local hrp = getHRP()
-    if not hrp then return end
-
-    VoidState.InFlicker = true
-    local savedVoidPos  = VoidState.IntendedPos
-
-    -- Push to fake ground position
+local function doDribble(side)
+    local args = {side or CFG.DribbleSide}
     pcall(function()
-        hrp.CFrame = CFrame.new(VoidState.FakeGroundPos)
-        hrp.AssemblyLinearVelocity = Vector3.new(0, -0.01, 0)
-    end)
-
-    -- Return to void on next physics frame
-    task.delay(0, function()
-        local hrp2 = getHRP()
-        if hrp2 and CFG.Void.On then
-            pcall(function()
-                hrp2.CFrame = CFrame.new(savedVoidPos)
-                hrp2.AssemblyLinearVelocity = Vector3.zero
-            end)
-        end
-        VoidState.InFlicker = false
+        Remotes.Dribble:FireServer(unpack(args))
     end)
 end
 
--- ═══════════════════════════════════════════
--- VOID EVASION
--- Detects nearby enemy projectiles/players via velocity prediction
--- Pushes void position away from incoming threats
--- ═══════════════════════════════════════════
-local function checkVoidEvasion()
-    if not CFG.Evade.On or VoidState.EvadeCooldown > 0 then return end
+local function startAutoDribble()
+    if dribbleConn then dribbleConn:Disconnect() end
+    
+    dribbleConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoDribble then return end
+        
+        local hasBall = false
+        pcall(function()
+            for _, obj in ipairs(character:GetDescendants()) do
+                if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                    hasBall = true
+                    break
+                end
+            end
+        end)
+        
+        if hasBall then
+            if CFG.DribbleSide == "Alternate" then
+                -- Alternate between left and right
+                doDribble(math.random() > 0.5 and "Right" or "Left")
+            else
+                doDribble(CFG.DribbleSide)
+            end
+        end
+        
+        task.wait(CFG.DribbleSpeed)
+    end)
+end
 
-    local minDist   = math.huge
-    local threatVec = Vector3.zero
+local function stopAutoDribble()
+    if dribbleConn then
+        dribbleConn:Disconnect()
+        dribbleConn = nil
+    end
+end
 
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LP and p.Character then
-            local hrp = p.Character:FindFirstChild("HumanoidRootPart")
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if hrp and hum and hum.Health > 0 then
-                local vel  = hrp.AssemblyLinearVelocity
-                -- Predict 0.5s ahead
-                local pred = hrp.Position + vel * 0.5
-                local d    = (pred - VoidState.IntendedPos).Magnitude
-                if d < minDist then
-                    minDist   = d
-                    threatVec = (pred - VoidState.IntendedPos).Unit
+-- ═══════════════════════════════════════════
+-- AUTO GREEN SHOOTING SYSTEM
+-- ═══════════════════════════════════════════
+local shootConn = nil
+
+-- Calculate perfect power based on distance (Auto Green)
+local function calculateGreenPower(distance)
+    -- Basketball physics approximation
+    -- Perfect arc requires specific power based on distance
+    
+    local power = 0.5 -- Base power
+    
+    if distance < 15 then
+        -- Very close - layup power
+        power = 0.35
+    elseif distance < 25 then
+        -- Close range
+        power = 0.42
+    elseif distance < 35 then
+        -- Mid range
+        power = 0.50
+    elseif distance < 45 then
+        -- Three point line
+        power = 0.58
+    elseif distance < 55 then
+        -- Deep three
+        power = 0.65
+    else
+        -- Half court / deep
+        power = math.clamp(distance / 85, 0.65, 0.85)
+    end
+    
+    -- Small random variation for realism (only if not pure green)
+    if not CFG.AutoGreen then
+        power = power + (math.random(-10, 10) / 1000)
+    end
+    
+    return math.clamp(power, 0.1, 1.0)
+end
+
+-- Find nearest hoop with position and height
+local function findNearestHoop()
+    local nearestHoop = nil
+    local nearestDist = math.huge
+    local hoopHeight = 0
+    
+    pcall(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            local name = obj.Name:lower()
+            if name:find("hoop") or name:find("rim") or name:find("basket") or name:find("goal") then
+                if obj:IsA("BasePart") then
+                    local dist = (obj.Position - hrp.Position).Magnitude
+                    if dist < nearestDist then
+                        nearestDist = dist
+                        nearestHoop = obj
+                        hoopHeight = obj.Position.Y
+                    end
                 end
             end
         end
-    end
+    end)
+    
+    return nearestHoop, nearestDist, hoopHeight
+end
 
-    if minDist < CFG.Evade.Radius then
-        -- Flee away from threat, scaled by proximity
-        local esc       = -threatVec
-        local threat    = clamp(1 - (minDist / CFG.Evade.Radius), 0, 1)
-        local escForce  = CFG.Evade.Speed * (1 + threat * 2)
+local function doShoot(power)
+    local args = {
+        power,
+        "Shoot"
+    }
+    pcall(function()
+        Remotes.Shoot:FireServer(unpack(args))
+    end)
+end
 
-        VoidState.X = VoidState.X + esc.X * escForce
-        VoidState.Z = VoidState.Z + esc.Z * escForce
-
-        -- Vertical escape with configurable bias
-        if math.random() < (CFG.Evade.VertBias + threat * 0.2) then
-            local vDir = CFG.Evade.ForceUp and 1 or (math.random() > 0.5 and 1 or -1)
-            VoidState.YOffset = VoidState.YOffset + vDir * CFG.Evade.Vertical
+local function startAutoShoot()
+    if shootConn then shootConn:Disconnect() end
+    
+    shootConn = RunService.Heartbeat:Connect(function()
+        if not CFG.AutoShoot then return end
+        
+        local hasBall = false
+        pcall(function()
+            for _, obj in ipairs(character:GetDescendants()) do
+                if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                    hasBall = true
+                    break
+                end
+            end
+        end)
+        
+        if not hasBall then return end
+        
+        local hoop, distance, hoopHeight = findNearestHoop()
+        if not hoop then return end
+        
+        -- Only shoot if in reasonable range (5-70 studs)
+        if distance < 5 or distance > 70 then return end
+        
+        -- Calculate power
+        local power
+        if CFG.AutoGreen then
+            -- Perfect calculation for green shots
+            power = calculateGreenPower(distance)
+            
+            -- Adjust for height difference
+            local heightDiff = hoopHeight - hrp.Position.Y
+            if heightDiff > 5 then
+                power = power + 0.05 -- Slightly more power if hoop is higher
+            elseif heightDiff < -5 then
+                power = power - 0.03 -- Slightly less if downhill
+            end
+            
+            -- Perfect timing - small adjustment for exact distance
+            local fineTune = (distance % 10) / 1000
+            power = math.clamp(power + fineTune, 0.1, 1.0)
+        else
+            -- Manual power setting
+            power = CFG.ShootPower
         end
+        
+        -- Check if facing hoop (dot product)
+        local facingHoop = false
+        pcall(function()
+            local toHoop = (hoop.Position - hrp.Position).Unit
+            local lookDir = hrp.CFrame.LookVector
+            local dot = toHoop:Dot(lookDir)
+            facingHoop = dot > 0.5 -- Within ~60 degrees
+        end)
+        
+        -- Auto shoot if facing hoop or very close
+        if facingHoop or distance < 15 then
+            doShoot(power)
+            task.wait(0.8) -- Shot cooldown
+        end
+    end)
+end
 
-        VoidState.EvadeCooldown = CFG.Evade.Cooldown * (1 - threat * 0.3)
+local function stopAutoShoot()
+    if shootConn then
+        shootConn:Disconnect()
+        shootConn = nil
     end
 end
 
 -- ═══════════════════════════════════════════
--- BYPASS APPLICATION
--- Applies position to HRP using selected bypass method
+-- SPEED BOOST SYSTEM
 -- ═══════════════════════════════════════════
-local function applyBypass(hrp, targetPos)
-    local mode = CFG.Void.BypassMode
+local speedConn = nil
+local originalSpeed = 16
+local originalJump = 50
 
-    if mode == "Velocity" then
-        -- Move using velocity — less obvious but less accurate
+local function applySpeedBoost()
+    pcall(function()
+        if humanoid then
+            humanoid.WalkSpeed = CFG.WalkSpeed
+            humanoid.JumpPower = CFG.JumpPower
+        end
+    end)
+end
+
+local function startSpeedBoost()
+    if speedConn then speedConn:Disconnect() end
+    
+    applySpeedBoost()
+    
+    speedConn = RunService.Heartbeat:Connect(function()
+        if not CFG.SpeedBoost then return end
+        
         pcall(function()
-            hrp.AssemblyLinearVelocity = (targetPos - hrp.Position) * 100
+            if humanoid then
+                if humanoid.WalkSpeed < CFG.WalkSpeed then
+                    humanoid.WalkSpeed = CFG.WalkSpeed
+                end
+                if humanoid.JumpPower < CFG.JumpPower then
+                    humanoid.JumpPower = CFG.JumpPower
+                end
+            end
         end)
+    end)
+end
 
-    elseif mode == "CFrame only" then
-        -- Direct CFrame write — simplest
+local function stopSpeedBoost()
+    if speedConn then
+        speedConn:Disconnect()
+        speedConn = nil
+    end
+    
+    pcall(function()
+        if humanoid then
+            humanoid.WalkSpeed = originalSpeed
+            humanoid.JumpPower = originalJump
+        end
+    end)
+end
+
+-- ═══════════════════════════════════════════
+-- NO JUMP COOLDOWN SYSTEM
+-- ═══════════════════════════════════════════
+local jumpConn = nil
+
+local function disableJumpCooldown()
+    pcall(function()
+        local jumpCooldownScript = LP.PlayerScripts:FindFirstChild("JumpCooldown")
+        if jumpCooldownScript then
+            jumpCooldownScript.Disabled = true
+        end
+        
+        local charJumpScript = character:FindFirstChild("JumpCooldown")
+        if charJumpScript then
+            charJumpScript.Disabled = true
+        end
+    end)
+end
+
+local function enableJumpCooldown()
+    pcall(function()
+        local jumpCooldownScript = LP.PlayerScripts:FindFirstChild("JumpCooldown")
+        if jumpCooldownScript then
+            jumpCooldownScript.Disabled = false
+        end
+    end)
+end
+
+local function startInfJump()
+    if jumpConn then jumpConn:Disconnect() end
+    
+    disableJumpCooldown()
+    
+    -- Mobile optimized - use jump button detection
+    jumpConn = RunService.Heartbeat:Connect(function()
+        if not CFG.InfJump then return end
+        
         pcall(function()
-            hrp.CFrame = CFrame.new(targetPos)
+            -- Check if jump is requested and humanoid is on ground
+            if humanoid and humanoid:GetState() == Enum.HumanoidStateType.Running then
+                if humanoid.Jump then
+                    humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                end
+            end
         end)
+    end)
+end
 
-    elseif mode == "Hybrid" then
-        -- CFrame + tiny upward velocity to keep physics active
-        pcall(function()
-            hrp.CFrame = CFrame.new(targetPos)
-            hrp.AssemblyLinearVelocity = Vector3.new(0, 0.01, 0)
-        end)
+local function stopInfJump()
+    if jumpConn then
+        jumpConn:Disconnect()
+        jumpConn = nil
+    end
+    
+    enableJumpCooldown()
+end
 
-    elseif mode == "Physics Bypass" then
-        -- CFrame + random velocity to confuse server interpolation
-        pcall(function()
-            hrp.CFrame = CFrame.new(targetPos)
-            hrp.AssemblyLinearVelocity = Vector3.new(
-                math.random(-1, 1),
-                math.random(-1, 1),
-                math.random(-1, 1)
-            ) * 1e5
-        end)
+-- ═══════════════════════════════════════════
+-- BALL & HOOP INDICATOR SYSTEM
+-- ═══════════════════════════════════════════
+local ballIndicatorGui = nil
+local hoopIndicatorGui = nil
+local indicatorConn = nil
 
-    else
-        -- Extreme Networking (default): CFrame + zero velocities
-        -- Periodically chaos-injects velocity to disrupt server reconciliation
-        pcall(function()
-            hrp.CFrame = CFrame.new(targetPos)
-            hrp.AssemblyLinearVelocity = Vector3.zero
-            hrp.AssemblyAngularVelocity = Vector3.zero
-        end)
+local function createIndicator(name, color, parent)
+    local indicator = Instance.new("Frame")
+    indicator.Name = name
+    indicator.BackgroundColor3 = color
+    indicator.BorderSizePixel = 0
+    indicator.Size = UDim2.new(0, CFG.IndicatorSize, 0, CFG.IndicatorSize)
+    indicator.Position = UDim2.new(0.5, 0, 0.5, 0)
+    indicator.AnchorPoint = Vector2.new(0.5, 0.5)
+    indicator.Parent = parent
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = indicator
+    
+    local glow = Instance.new("ImageLabel")
+    glow.Name = "Glow"
+    glow.BackgroundTransparency = 1
+    glow.Image = "rbxassetid://10873939892"
+    glow.ImageColor3 = color
+    glow.ImageTransparency = 0.5
+    glow.Size = UDim2.new(2, 0, 2, 0)
+    glow.Position = UDim2.new(-0.5, 0, -0.5, 0)
+    glow.Parent = indicator
+    
+    return indicator
+end
 
-        -- ~1/10 chance per frame to inject velocity chaos
-        if math.random(1, 10) == 1 then
+local function startIndicators()
+    -- Ball Indicator
+    if ballIndicatorGui then ballIndicatorGui:Destroy() end
+    ballIndicatorGui = Instance.new("ScreenGui")
+    ballIndicatorGui.Name = "BallIndicator"
+    ballIndicatorGui.ResetOnSpawn = false
+    ballIndicatorGui.IgnoreGuiInset = true
+    ballIndicatorGui.Parent = LP:WaitForChild("PlayerGui")
+    
+    local ballIndicator = createIndicator("Ball", CFG.IndicatorColor, ballIndicatorGui)
+    
+    -- Hoop Indicator (for shooting guide)
+    if hoopIndicatorGui then hoopIndicatorGui:Destroy() end
+    hoopIndicatorGui = Instance.new("ScreenGui")
+    hoopIndicatorGui.Name = "HoopIndicator"
+    hoopIndicatorGui.ResetOnSpawn = false
+    hoopIndicatorGui.IgnoreGuiInset = true
+    hoopIndicatorGui.Parent = LP:WaitForChild("PlayerGui")
+    
+    local hoopIndicator = createIndicator("Hoop", CFG.HoopColor, hoopIndicatorGui)
+    
+    if indicatorConn then indicatorConn:Disconnect() end
+    
+    indicatorConn = RunService.RenderStepped:Connect(function()
+        -- Ball Indicator
+        if CFG.BallIndicator then
             pcall(function()
-                hrp.AssemblyLinearVelocity = Vector3.new(
-                    (math.random() - 0.5) * 2e7,
-                    (math.random() - 0.5) * 2e7,
-                    (math.random() - 0.5) * 2e7
-                )
+                local ball = nil
+                -- Find ball in workspace
+                for _, obj in ipairs(workspace:GetDescendants()) do
+                    if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                        if obj:IsA("BasePart") then
+                            ball = obj
+                            break
+                        end
+                    end
+                end
+                
+                -- Check character
+                if not ball then
+                    for _, obj in ipairs(character:GetDescendants()) do
+                        if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
+                            ball = obj
+                            break
+                        end
+                    end
+                end
+                
+                if ball and ball:IsA("BasePart") then
+                    local pos, onScreen = camera:WorldToViewportPoint(ball.Position)
+                    if onScreen then
+                        ballIndicator.Visible = true
+                        ballIndicator.Position = UDim2.new(0, pos.X, 0, pos.Y)
+                        
+                        local dist = (ball.Position - camera.CFrame.Position).Magnitude
+                        local scale = math.clamp(1000 / dist, 5, 30)
+                        ballIndicator.Size = UDim2.new(0, scale, 0, scale)
+                    else
+                        ballIndicator.Visible = false
+                    end
+                else
+                    ballIndicator.Visible = false
+                end
             end)
+        else
+            ballIndicator.Visible = false
         end
-    end
-end
-
--- ═══════════════════════════════════════════
--- LOCK TO VOID — main per-frame void logic
--- ═══════════════════════════════════════════
-local function lockToVoid(dt)
-    if VoidState.InFlicker then return end
-
-    -- Tick evasion cooldown
-    if VoidState.EvadeCooldown > 0 then
-        VoidState.EvadeCooldown = VoidState.EvadeCooldown - dt
-    end
-
-    checkVoidEvasion()
-
-    -- Compute new void position from selected method
-    VoidState.IntendedPos = computeVoidPosition(dt)
-
-    -- Anti-detect micro-jitter (non-Stable methods only)
-    local targetPos = VoidState.IntendedPos
-    if CFG.Void.Method ~= "Stable" then
-        local mt = tick() * 1000
-        targetPos = targetPos + Vector3.new(
-            math.sin(mt * 0.1) * 50,
-            math.sin(mt * 0.07) * 20,
-            math.cos(mt * 0.13) * 50
-        )
-    end
-
-    local hrp = getHRP()
-    if not hrp then return end
-
-    applyBypass(hrp, targetPos)
-
-    -- Desync sub-system
-    if CFG.Desync.On then
-        stepSpoofPosition(dt)
-        VoidState.DesyncTimer = VoidState.DesyncTimer + dt
-        if VoidState.DesyncTimer >= CFG.Desync.Tick then
-            VoidState.DesyncTimer = 0
-            task.spawn(runDesyncFlicker)
+        
+        -- Hoop Indicator (Shooting Guide)
+        if CFG.HoopIndicator then
+            pcall(function()
+                local hoop, distance = findNearestHoop()
+                if hoop and distance < 100 then
+                    local pos, onScreen = camera:WorldToViewportPoint(hoop.Position)
+                    if onScreen then
+                        hoopIndicator.Visible = true
+                        hoopIndicator.Position = UDim2.new(0, pos.X, 0, pos.Y)
+                        
+                        -- Change color based on if you're in range
+                        if distance > 5 and distance < 70 then
+                            hoopIndicator.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Green (in range)
+                        else
+                            hoopIndicator.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Red (out of range)
+                        end
+                        
+                        local dist = (hoop.Position - camera.CFrame.Position).Magnitude
+                        local scale = math.clamp(800 / dist, 8, 25)
+                        hoopIndicator.Size = UDim2.new(0, scale, 0, scale)
+                    else
+                        hoopIndicator.Visible = false
+                    end
+                else
+                    hoopIndicator.Visible = false
+                end
+            end)
+        else
+            hoopIndicator.Visible = false
         end
-    end
-end
-
--- ═══════════════════════════════════════════
--- START / STOP VOID
--- ═══════════════════════════════════════════
-local function startVoid()
-    if VoidState.Conn then
-        VoidState.Conn:Disconnect()
-        VoidState.Conn = nil
-    end
-
-    -- Try to claim network ownership
-    task.spawn(function()
-        local hrp = getHRP()
-        if hrp then
-            pcall(function() hrp:SetNetworkOwner(LP) end)
-        end
-        task.spawn(updateGroundY)
-    end)
-
-    -- Reset starting position to current character position
-    local hrp = getHRP()
-    if hrp then
-        local pos = hrp.Position
-        VoidState.X           = pos.X
-        VoidState.Z           = pos.Z
-        VoidState.IntendedPos = Vector3.new(pos.X, CFG.Void.YBase, pos.Z)
-        VoidState.SpoofBaseX  = pos.X
-        VoidState.SpoofBaseZ  = pos.Z
-    end
-
-    VoidState.Active = true
-
-    VoidState.Conn = RunService.Heartbeat:Connect(function(dt)
-        if not CFG.Void.On then
-            VoidState.Conn:Disconnect()
-            VoidState.Conn   = nil
-            VoidState.Active = false
-            return
-        end
-        VoidState.Elapsed = VoidState.Elapsed + dt
-        lockToVoid(dt)
     end)
 end
 
-local function stopVoid()
-    if VoidState.Conn then
-        VoidState.Conn:Disconnect()
-        VoidState.Conn = nil
+local function stopIndicators()
+    if indicatorConn then
+        indicatorConn:Disconnect()
+        indicatorConn = nil
     end
-    VoidState.Active = false
+    if ballIndicatorGui then
+        ballIndicatorGui:Destroy()
+        ballIndicatorGui = nil
+    end
+    if hoopIndicatorGui then
+        hoopIndicatorGui:Destroy()
+        hoopIndicatorGui = nil
+    end
+end
 
-    -- Return character to a safe position
-    local hrp = getHRP()
-    if hrp then
+-- ═══════════════════════════════════════════
+-- MOBILE OPTIMIZED UI
+-- ═══════════════════════════════════════════
+
+-- Main Tab - Dribble
+local MN_L = Tabs.Main:AddLeftGroupbox("Auto Dribble")
+local MN_R = Tabs.Main:AddRightGroupbox("Dribble Settings")
+
+MN_L:AddToggle("AutoDribble", {
+    Text = "Auto Dribble",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoDribble = v
+        if v then
+            startAutoDribble()
+            Library:Notify("Auto Dribble enabled", 2)
+        else
+            stopAutoDribble()
+        end
+    end
+})
+
+MN_L:AddDropdown("DribbleSide", {
+    Text = "Dribble Side",
+    Default = "Right",
+    Values = {"Right", "Left", "Alternate"},
+    Callback = function(v)
+        CFG.DribbleSide = v
+    end
+})
+
+MN_R:AddSlider("DribbleSpeed", {
+    Text = "Dribble Speed",
+    Default = 0.15,
+    Min = 0.05,
+    Max = 0.5,
+    Rounding = 2,
+    Callback = function(v)
+        CFG.DribbleSpeed = v
+    end
+})
+
+MN_R:AddButton({
+    Text = "Dribble Right",
+    Func = function()
+        doDribble("Right")
+    end
+})
+
+MN_R:AddButton({
+    Text = "Dribble Left",
+    Func = function()
+        doDribble("Left")
+    end
+})
+
+-- Shooting Tab - Auto Green Focus
+local SH_L = Tabs.Shooting:AddLeftGroupbox("Auto Shoot")
+local SH_R = Tabs.Shooting:AddRightGroupbox("Auto Green Settings")
+
+SH_L:AddToggle("AutoShoot", {
+    Text = "Auto Shoot",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoShoot = v
+        if v then
+            startAutoShoot()
+            Library:Notify("Auto Shoot enabled", 2)
+        else
+            stopAutoShoot()
+        end
+    end
+})
+
+-- NEW: Auto Green Toggle
+SH_L:AddToggle("AutoGreen", {
+    Text = "Auto Green (Never Miss)",
+    Default = false,
+    Callback = function(v)
+        CFG.AutoGreen = v
+        if v then
+            Library:Notify("Auto Green enabled - Perfect shots every time!", 3)
+        else
+            Library:Notify("Auto Green disabled - Using manual power", 2)
+        end
+    end
+})
+
+SH_L:AddLabel("Auto Green calculates perfect power based on distance")
+
+SH_R:AddSlider("ShootPower", {
+    Text = "Manual Power",
+    Default = 0.5,
+    Min = 0.1,
+    Max = 1.0,
+    Rounding = 2,
+    Callback = function(v)
+        CFG.ShootPower = v
+    end
+})
+
+SH_R:AddLabel("Only used when Auto Green is OFF")
+
+SH_R:AddButton({
+    Text = "Manual Shoot",
+    Func = function()
+        local power = CFG.AutoGreen and calculateGreenPower(30) or CFG.ShootPower
+        doShoot(power)
+    end
+})
+
+-- Movement Tab
+local MV_L = Tabs.Movement:AddLeftGroupbox("Speed Boost")
+local MV_R = Tabs.Movement:AddRightGroupbox("Jump Settings")
+
+MV_L:AddToggle("SpeedBoost", {
+    Text = "Speed Boost",
+    Default = false,
+    Callback = function(v)
+        CFG.SpeedBoost = v
+        if v then
+            startSpeedBoost()
+            Library:Notify("Speed Boost enabled", 2)
+        else
+            stopSpeedBoost()
+        end
+    end
+})
+
+MV_L:AddSlider("WalkSpeed", {
+    Text = "Walk Speed",
+    Default = 16,
+    Min = 16,
+    Max = 100,
+    Rounding = 0,
+    Callback = function(v)
+        CFG.WalkSpeed = v
+        if CFG.SpeedBoost then
+            applySpeedBoost()
+        end
+    end
+})
+
+MV_L:AddSlider("JumpPower", {
+    Text = "Jump Power",
+    Default = 50,
+    Min = 50,
+    Max = 150,
+    Rounding = 0,
+    Callback = function(v)
+        CFG.JumpPower = v
+        if CFG.SpeedBoost then
+            applySpeedBoost()
+        end
+    end
+})
+
+MV_R:AddToggle("NoJumpCooldown", {
+    Text = "No Jump Cooldown",
+    Default = false,
+    Callback = function(v)
+        CFG.NoJumpCooldown = v
+        if v then
+            disableJumpCooldown()
+            Library:Notify("Jump Cooldown disabled", 2)
+        else
+            enableJumpCooldown()
+        end
+    end
+})
+
+MV_R:AddToggle("InfJump", {
+    Text = "Infinite Jump",
+    Default = false,
+    Callback = function(v)
+        CFG.InfJump = v
+        if v then
+            startInfJump()
+            Library:Notify("Infinite Jump enabled", 2)
+        else
+            stopInfJump()
+        end
+    end
+})
+
+-- Visuals Tab - Mobile Optimized
+local VS_L = Tabs.Visuals:AddLeftGroupbox("Indicators")
+
+VS_L:AddToggle("BallIndicator", {
+    Text = "Ball Indicator",
+    Default = false,
+    Callback = function(v)
+        CFG.BallIndicator = v
+        if v or CFG.HoopIndicator then
+            startIndicators()
+        elseif not CFG.BallIndicator and not CFG.HoopIndicator then
+            stopIndicators()
+        end
+    end
+})
+
+-- NEW: Hoop Indicator
+VS_L:AddToggle("HoopIndicator", {
+    Text = "Hoop Indicator (Shooting Guide)",
+    Default = false,
+    Callback = function(v)
+        CFG.HoopIndicator = v
+        if v or CFG.BallIndicator then
+            startIndicators()
+        elseif not CFG.BallIndicator and not CFG.HoopIndicator then
+            stopIndicators()
+        end
+    end
+})
+
+VS_L:AddLabel("Green = In range, Red = Too far/close")
+
+VS_L:AddSlider("IndicatorSize", {
+    Text = "Indicator Size",
+    Default = 10,
+    Min = 5,
+    Max = 30,
+    Rounding = 0,
+    Callback = function(v)
+        CFG.IndicatorSize = v
+    end
+})
+
+VS_L:AddLabel("Ball Color"):AddColorPicker("BallColor", {
+    Default = Color3.fromRGB(255, 255, 0),
+    Callback = function(v)
+        CFG.IndicatorColor = v
+    end
+})
+
+VS_L:AddLabel("Hoop Color"):AddColorPicker("HoopColor", {
+    Default = Color3.fromRGB(0, 255, 0),
+    Callback = function(v)
+        CFG.HoopColor = v
+    end
+})
+
+-- Settings Tab
+local ST_R = Tabs.Settings:AddRightGroupbox("Stop All")
+
+ST_R:AddButton({
+    Text = "Stop All Features",
+    Func = function()
+        CFG.AutoDribble = false
+        CFG.AutoShoot = false
+        CFG.AutoGreen = false
+        CFG.SpeedBoost = false
+        CFG.NoJumpCooldown = false
+        CFG.InfJump = false
+        CFG.BallIndicator = false
+        CFG.HoopIndicator = false
+        
+        stopAutoDribble()
+        stopAutoShoot()
+        stopSpeedBoost()
+        stopInfJump()
+        stopIndicators()
+        enableJumpCooldown()
+        
         pcall(function()
-            hrp.CFrame = CFrame.new(VoidState.SpoofBaseX, VoidState.GroundY + 5, VoidState.SpoofBaseZ)
-            hrp.AssemblyLinearVelocity = Vector3.zero
-        end)
-    end
-end
-
--- ═══════════════════════════════════════════
--- KILL NOTIFIER
--- ═══════════════════════════════════════════
-local notifList = {}
-local NOTIF_Y   = 80
-
-local notifSG = Instance.new("ScreenGui")
-notifSG.Name          = "VoidPremiumNotifs"
-notifSG.ResetOnSpawn  = false
-notifSG.IgnoreGuiInset= true
-notifSG.DisplayOrder  = 998
-pcall(function() notifSG.Parent = game:GetService("CoreGui") end)
-if not notifSG.Parent then
-    notifSG.Parent = LP:WaitForChild("PlayerGui")
-end
-
-local function showNotif(txt, col, duration)
-    if not CFG.KillNotifier then return end
-    col      = col      or Color3.fromRGB(120, 80, 255)
-    duration = duration or 2.5
-
-    local f = Instance.new("Frame", notifSG)
-    f.Size            = UDim2.new(0, 220, 0, 32)
-    f.Position        = UDim2.new(0.5, -110, 0, NOTIF_Y + #notifList * 36)
-    f.BackgroundColor3= Color3.fromRGB(14, 14, 18)
-    f.BorderSizePixel = 1
-    f.BorderColor3    = col
-    f.ZIndex          = 10
-    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
-
-    -- Accent left bar
-    local bar = Instance.new("Frame", f)
-    bar.Size            = UDim2.new(0, 3, 1, 0)
-    bar.BackgroundColor3= col
-    bar.BorderSizePixel = 0
-    bar.ZIndex          = 11
-    Instance.new("UICorner", bar).CornerRadius = UDim.new(0, 3)
-
-    local lbl = Instance.new("TextLabel", f)
-    lbl.Size              = UDim2.new(1, -10, 1, 0)
-    lbl.Position          = UDim2.new(0, 8, 0, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text              = txt
-    lbl.TextColor3        = Color3.new(1, 1, 1)
-    lbl.Font              = Enum.Font.GothamBold
-    lbl.TextSize          = 12
-    lbl.TextXAlignment    = Enum.TextXAlignment.Left
-    lbl.ZIndex            = 11
-
-    table.insert(notifList, f)
-
-    -- Kill sound
-    if CFG.KillSound then
-        pcall(function()
-            local snd = Instance.new("Sound", workspace)
-            snd.SoundId              = "rbxassetid://4764109000"
-            snd.Volume               = 0.4
-            snd.RollOffMaxDistance   = 0
-            snd:Play()
-            Debris:AddItem(snd, 2)
-        end)
-    end
-
-    task.delay(duration, function()
-        pcall(function()
-            for i, v in ipairs(notifList) do
-                if v == f then table.remove(notifList, i); break end
-            end
-            f:Destroy()
-            for i, v in ipairs(notifList) do
-                pcall(function()
-                    v.Position = UDim2.new(0.5, -110, 0, NOTIF_Y + (i - 1) * 36)
-                end)
+            if humanoid then
+                humanoid.WalkSpeed = originalSpeed
+                humanoid.JumpPower = originalJump
             end
         end)
-    end)
-end
-
-local watchedHumanoids = {}
-
-local function watchPlayer(p)
-    if not p or p == LP then return end
-    local function hookChar(char)
-        if not char then return end
-        local hum = char:FindFirstChildOfClass("Humanoid")
-            or char:WaitForChild("Humanoid", 5)
-        if not hum or watchedHumanoids[hum] then return end
-        watchedHumanoids[hum] = true
-        hum.Died:Connect(function()
-            if CFG.KillNotifier then
-                showNotif("☠ Eliminated " .. p.Name, Color3.fromRGB(120, 80, 255), 3)
-            end
-            watchedHumanoids[hum] = nil
-        end)
+        
+        Library:Notify("All features stopped", 3)
     end
-    if p.Character then task.spawn(hookChar, p.Character) end
-    p.CharacterAdded:Connect(hookChar)
-end
+})
 
-for _, p in ipairs(Players:GetPlayers()) do watchPlayer(p) end
-Players.PlayerAdded:Connect(watchPlayer)
-
--- ═══════════════════════════════════════════
--- UI: TAB 1 — VOID
--- ═══════════════════════════════════════════
-local s_v_control = tabs.void:CreateSection("Void Control")
-local s_v_method  = tabs.void:CreateSection("Method & Bypass")
-local s_v_params  = tabs.void:CreateSection("Parameters")
-local s_v_adv     = tabs.void:CreateSection("Advanced")
-
-local voidStatusLabel = s_v_control:CreateLabel("Status: INACTIVE")
-
-s_v_control:CreateToggle("Enable Voidspam", false, function(v)
-    CFG.Void.On = v
-    if v then
-        startVoid()
-        voidStatusLabel:UpdateText("Status: ACTIVE ⚡")
-    else
-        stopVoid()
-        voidStatusLabel:UpdateText("Status: INACTIVE")
+ST_R:AddButton({
+    Text = "Unload UI",
+    Func = function()
+        Library:Unload()
     end
-end)
+})
 
-local voidMethods = {
-    "Stable", "Drift", "Chaotic", "Circle", "Spiral", "Lissajous",
-    "Perlin Noise", "Flicker", "Gravity Well", "Helix", "Figure 8",
-    "Tornado", "Butterfly", "Double Helix", "Chaotic Sphere",
-    "Quantum Tunneling", "Fractal Desync", "Extreme Desync",
-    "Quantum Oscillation", "Frame Skip",
-}
-s_v_method:CreateDropdown("Void Method", voidMethods, function(v)
-    CFG.Void.Method = v
-end, "Quantum Tunneling", false)
-
-local bypassModes = {
-    "Extreme Networking", "Velocity", "CFrame only", "Hybrid", "Physics Bypass"
-}
-s_v_method:CreateDropdown("Bypass Mode", bypassModes, function(v)
-    CFG.Void.BypassMode = v
-end, "Extreme Networking", false)
-
-s_v_params:CreateSlider("Drift Speed (M/s)", 1, 200, 9, true, function(v)
-    CFG.Void.DriftSpeed = v * 1e6
-end)
-s_v_params:CreateSlider("Drift Chaos %", 1, 100, 98, true, function(v)
-    CFG.Void.DriftChaos = v * 0.01
-end)
-s_v_params:CreateSlider("Void Altitude (B)", 1, 1000, 10, true, function(v)
-    CFG.Void.YBase = v * 1e9
-end)
-s_v_params:CreateSlider("Y Drift Range (B)", 0, 10, 2, true, function(v)
-    CFG.Void.YDriftRange = v * 1e9
-end)
-
-s_v_adv:CreateToggle("Scramble Position", true, function(v)
-    CFG.Void.Scramble = v
-end)
-s_v_adv:CreateSlider("Lissajous A", 1, 10, 2, true, function(v)
-    CFG.LissajousA = v
-end)
-s_v_adv:CreateSlider("Lissajous B", 1, 10, 3, true, function(v)
-    CFG.LissajousB = v
-end)
-s_v_adv:CreateSlider("Gravity Well Strength (M)", 1, 1000, 100, true, function(v)
-    CFG.GravityStr = v * 1e6
-end)
-s_v_adv:CreateSlider("Flicker Interval (ms)", 1, 50, 5, true, function(v)
-    CFG.FlickerInterval = v * 0.01
-end)
-s_v_adv:CreateLabel("Quantum Tunneling recommended for Rivals")
-s_v_adv:CreateLabel("Extreme Networking bypass is most aggressive")
+-- Theme & Save Manager
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({})
+ThemeManager:SetFolder("BasketballToolMobile")
+SaveManager:SetFolder("BasketballToolMobile")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
 
 -- ═══════════════════════════════════════════
--- UI: TAB 2 — DESYNC
+-- LOAD COMPLETE
 -- ═══════════════════════════════════════════
-local s_ds_main = tabs.desync:CreateSection("Desync Settings")
-local s_ds_info = tabs.desync:CreateSection("How It Works")
-
-s_ds_main:CreateToggle("Enable Desync", true, function(v)
-    CFG.Desync.On = v
-end)
-s_ds_main:CreateSlider("Desync Rate (x0.01s)", 1, 100, 18, true, function(v)
-    CFG.Desync.Tick = v * 0.01
-end)
-s_ds_main:CreateSlider("Spoof Radius (studs)", 1, 100, 22, true, function(v)
-    CFG.Desync.Radius = v
-end)
-s_ds_main:CreateSlider("Wander Speed", 1, 100, 35, true, function(v)
-    CFG.Desync.WanderSpeed = v * 0.1
-end)
-s_ds_main:CreateSlider("Wander Chaos %", 1, 100, 40, true, function(v)
-    CFG.Desync.WanderChaos = v * 0.01
-end)
-
-s_ds_info:CreateLabel("Desync flickers HRP to a ground-level")
-s_ds_info:CreateLabel("spoof position briefly each cycle.")
-s_ds_info:CreateLabel("Server hitbox splits from client visual.")
-s_ds_info:CreateLabel("Higher rate = more server confusion.")
-s_ds_info:CreateLabel("Lower rate = more stable movement.")
-
--- ═══════════════════════════════════════════
--- UI: TAB 3 — EVASION
--- ═══════════════════════════════════════════
-local s_ev_main = tabs.evasion:CreateSection("Void Evasion")
-local s_ev_adv  = tabs.evasion:CreateSection("Advanced")
-
-s_ev_main:CreateToggle("Enable Evasion", true, function(v)
-    CFG.Evade.On = v
-end)
-s_ev_main:CreateSlider("Evasion Radius (B)", 1, 50, 8, true, function(v)
-    CFG.Evade.Radius = v * 1e9
-end)
-s_ev_main:CreateSlider("Evasion Speed (B)", 1, 50, 6, true, function(v)
-    CFG.Evade.Speed = v * 1e9
-end)
-s_ev_main:CreateSlider("Evasion Cooldown (ms)", 1, 200, 50, true, function(v)
-    CFG.Evade.Cooldown = v * 0.001
-end)
-
-s_ev_adv:CreateSlider("Vertical Escape Force (B)", 1, 50, 3, true, function(v)
-    CFG.Evade.Vertical = v * 1e9
-end)
-s_ev_adv:CreateSlider("Vertical Bias %", 0, 100, 50, true, function(v)
-    CFG.Evade.VertBias = v * 0.01
-end)
-s_ev_adv:CreateToggle("Force Upward Escape", false, function(v)
-    CFG.Evade.ForceUp = v
-end)
-s_ev_adv:CreateLabel("Evasion uses 0.5s velocity prediction")
-s_ev_adv:CreateLabel("to detect incoming threats to the void pos.")
-
--- ═══════════════════════════════════════════
--- UI: TAB 4 — NOTIFIER
--- ═══════════════════════════════════════════
-local s_not_main = tabs.notifier:CreateSection("Kill Notifier")
-local s_not_info = tabs.notifier:CreateSection("Info")
-
-s_not_main:CreateToggle("Enable Kill Notifier", true, function(v)
-    CFG.KillNotifier = v
-end)
-s_not_main:CreateToggle("Kill Sound", true, function(v)
-    CFG.KillSound = v
-end)
-s_not_main:CreateButton("Test Notification", function()
-    showNotif("☠ Eliminated TestPlayer", Color3.fromRGB(120, 80, 255), 3)
-end)
-
-s_not_info:CreateLabel("Watches all enemy Humanoid.Died events.")
-s_not_info:CreateLabel("Shows purple notification with player name.")
-s_not_info:CreateLabel("Plays a sound on kill if enabled.")
-s_not_info:CreateLabel("Works for players that join after load.")
-
--- ═══════════════════════════════════════════
--- UI: TAB 5 — SETTINGS
--- ═══════════════════════════════════════════
-local s_set_main = tabs.settings:CreateSection("General")
-local s_set_act  = tabs.settings:CreateSection("Quick Actions")
-local s_set_info = tabs.settings:CreateSection("Build Info")
-
-s_set_main:CreateLabel("Device: " .. (IsMobile and "MOBILE" or "PC")
-    .. (screenSize and (" (" .. screenSize .. ")") or ""))
-s_set_main:CreateLabel("UI Toggle: Insert (PC) / Library button (Mobile)")
-s_set_main:CreateDropdown("Change Font", stored_fonts, function(v)
-    window:SetFont(v)
-end, "", false)
-
-s_set_act:CreateButton("⛔ Stop Void + Reset Position", function()
-    CFG.Void.On = false
-    stopVoid()
-    window:Notify("Void Stopped", "Character returned to map", 3)
-end)
-s_set_act:CreateButton("🔄 Restart Void", function()
-    if CFG.Void.On then
-        stopVoid()
-        task.wait(0.1)
-        startVoid()
-        window:Notify("Void Restarted", "New void position initialized", 3)
-    else
-        window:Notify("Void is OFF", "Enable void first", 3)
-    end
-end)
-s_set_act:CreateButton("📋 Print Void Status", function()
-    print("=== VOID STATUS ===")
-    print("Active:     ", VoidState.Active)
-    print("Method:     ", CFG.Void.Method)
-    print("Bypass:     ", CFG.Void.BypassMode)
-    print("Pos X/Z:    ", math.floor(VoidState.X), math.floor(VoidState.Z))
-    print("Y Base:     ", math.floor(CFG.Void.YBase))
-    print("Desync:     ", CFG.Desync.On)
-    print("Evasion:    ", CFG.Evade.On)
-    print("Ground Y:   ", VoidState.GroundY)
-    window:Notify("Status Printed", "Check F9 console", 3)
-end)
-
-s_set_info:CreateLabel("Rivals Void Premium v1.0")
-s_set_info:CreateLabel("nfpw UI Library")
-s_set_info:CreateLabel("Clean rewrite — not AI slop")
-s_set_info:CreateLabel("Void logic: fractal drift + quantum tunneling")
-s_set_info:CreateLabel("Desync: ground-Y flicker hitbox split")
-
-local config_manager = loadstring(game:HttpGet(
-    "https://raw.githubusercontent.com/nfpw/XXSCRIPT/refs/heads/main/Library/ConfigManager.lua"
-))()
-config_manager:SetLibrary(library)
-config_manager:SetWindow(window)
-config_manager:SetFolder("RivalsVoidPremium_v10")
-config_manager:BuildConfigSection(tabs.settings)
-config_manager:LoadAutoloadConfig()
-
--- ═══════════════════════════════════════════
--- CHARACTER RESPAWN — restore active features
--- ═══════════════════════════════════════════
-LP.CharacterAdded:Connect(function(nc)
-    character        = nc
-    humanoidRootPart = nc:WaitForChild("HumanoidRootPart")
-    humanoid         = nc:WaitForChild("Humanoid")
-
-    -- Reset void starting state
-    VoidState.InFlicker    = false
-    VoidState.EvadeCooldown= 0
-    VoidState.DesyncTimer  = 0
-
-    task.wait(1.5)
-
-    -- Re-hook kill notifier for existing players
-    for _, p in ipairs(Players:GetPlayers()) do
-        watchPlayer(p)
-    end
-
-    -- Re-start void if it was on
-    if CFG.Void.On then
-        startVoid()
-    end
-end)
-
--- ═══════════════════════════════════════════
--- WATERMARK HUD
--- ═══════════════════════════════════════════
-local watermark = library:Hud()
-RunService.RenderStepped:Connect(function()
-    local voidStatus = (VoidState.Active and CFG.Void.On)
-        and ("VOID ON | " .. CFG.Void.Method)
-        or "VOID OFF"
-    watermark:SetText("Rivals Void Premium v1.0 | " .. voidStatus .. " | " .. os.date("%H:%M:%S"))
-end)
-
--- ═══════════════════════════════════════════
--- LOAD NOTIFICATION
--- ═══════════════════════════════════════════
-window:Notify(
-    "Rivals Void Premium v1.0",
-    "Loaded. Toggle UI: Insert. Enable Void in the Void tab.",
-    6
-)
-task.wait(6)
-window:Notify(
-    "Recommended Setup",
-    "Method: Quantum Tunneling | Bypass: Extreme Networking | Desync: ON",
-    6
-)
-
-print("[RIVALS VOID PREMIUM v1.0] Loaded | "
-    .. (IsMobile and "MOBILE" or "PC")
-    .. (screenSize and (" | " .. screenSize) or ""))
+Library:Notify("Basketball Tool Mobile loaded!", 5)
+print("[BASKETBALL TOOL MOBILE] Loaded")
+print("[AUTO GREEN] Enabled - Perfect shot calculation active")
+print("[MOBILE] Keybinds removed, touch optimized")
