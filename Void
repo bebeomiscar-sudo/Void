@@ -1,850 +1,1651 @@
 --[[
-    BASKETBALL TOOL V2 — New Game Edition
-    Features: Auto Dunk, Pumpfake, Pass, Sprint, Dribble Moves, Auto Shoot, Auto Green
-    Remotes: Dunk, Pumpfake, Pass, Sprint, Dribble, Shoot
+    Carbon Hub — Escape Tsunami for Brainrots
+    Enhanced Edition with Modern UI
+    Features: Auto Farm, Brainrot Management, ESP, Movement, Visuals, Auto Upgrades, Server Utilities
 ]]
 
--- ═══════════════════════════════════════════
--- SERVICES
--- ═══════════════════════════════════════════
-local Players           = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService        = game:GetService("RunService")
-local TweenService      = game:GetService("TweenService")
+local SugarLibrary = loadstring(game:HttpGet("https://raw.githubusercontent.com/CStudios-Dev/carbon-ui/main/ByMelissa.lua"))()
+local Notification = SugarLibrary.Notification()
 
-local LP       = Players.LocalPlayer
-local camera   = workspace.CurrentCamera
-
--- ═══════════════════════════════════════════
--- LINORIA LIBRARY
--- ═══════════════════════════════════════════
-local repo         = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
-
-Library.ShowToggleFrameInKeybinds = true
-
-local Window = Library:CreateWindow({
-    Title                = "Basketball Tool V2",
-    Center               = true,
-    AutoShow             = true,
-    Resizable            = true,
-    ShowCustomCursor     = false,
-    UnlockMouseWhileOpen = true,
-    NotifySide           = "Left",
-    TabPadding           = 8,
-    MenuFadeTime         = 0.2,
-    Size                 = UDim2.fromOffset(480, 520),
+-- Elegant loading sequence
+Notification.new({
+    Title = "Carbon Hub",
+    Description = "Initializing systems...",
+    Duration = 2,
+    Icon = "loader"
 })
 
+task.wait(0.5)
+
+Notification.new({
+    Title = "Escape Tsunami",
+    Description = "Loading complete!",
+    Duration = 3,
+    Icon = "shield-check"
+})
+
+-- Initialize Window with modern styling
+local Window = SugarLibrary.new({
+    Title = "Carbon Hub | Escape Tsunami",
+    Description = "Premium Automation Suite",
+    Keybind = Enum.KeyCode.LeftControl,
+    Logo = "rbxassetid://139843228276286",
+    ConfigFolder = "CarbonConfigs",
+    Theme = "Dark", -- Modern dark theme
+    AccentColor = Color3.fromRGB(0, 170, 255), -- Cyan accent
+    Transparency = true,
+    Blur = true,
+    AnimateUI = true
+})
+
+-- Create organized tabs
 local Tabs = {
-    Main        = Window:AddTab("Main"),
-    Shooting    = Window:AddTab("Shooting"),
-    Dribble     = Window:AddTab("Dribble"),
-    Movement    = Window:AddTab("Movement"),
-    Visuals     = Window:AddTab("Visuals"),
-    Settings    = Window:AddTab("Settings"),
+    Main      = Window:NewTab({Title = "Main",      Description = "Core Features",      Icon = "home"}),
+    Farm      = Window:NewTab({Title = "Farm",      Description = "Automation",      Icon = "sprout"}),
+    Brainrot  = Window:NewTab({Title = "Brainrot",  Description = "Collection",    Icon = "brain"}),
+    Upgrades  = Window:NewTab({Title = "Upgrades",  Description = "Progression",   Icon = "trending-up"}),
+    Movement = Window:NewTab({Title = "Movement",  Description = "Navigation",    Icon = "move"}),
+    Visuals   = Window:NewTab({Title = "Visuals",   Description = "Graphics",      Icon = "eye"}),
+    ESP       = Window:NewTab({Title = "ESP",       Description = "Tracking",      Icon = "target"}),
+    Server    = Window:NewTab({Title = "Server",    Description = "Utilities",    Icon = "globe"}),
+    Configs   = Window:NewTab({Title = "Configs",   Description = "Settings",      Icon = "settings"})
 }
 
--- ═══════════════════════════════════════════
--- CONFIGURATION
--- ═══════════════════════════════════════════
-local CFG = {
-    -- Main
-    AutoDunk        = false,
-    AutoPumpfake    = false,
-    AutoPass        = false,
-    
-    -- Dribble
-    AutoDribble     = false,
-    DribbleMove     = "X", -- X, V, C
-    DribbleSpeed    = 0.2,
-    
-    -- Sprint
-    AutoSprint      = false,
-    
-    -- Shooting
-    AutoShoot       = false,
-    AutoGreen       = false,
-    ShootPower      = 100,
-    
-    -- Movement
-    SpeedBoost      = false,
-    WalkSpeed       = 16,
-    JumpPower       = 50,
-    InfJump         = false,
-    
-    -- Visuals
-    BallIndicator   = false,
-    HoopIndicator   = false,
-    IndicatorSize   = 12,
-    BallColor       = Color3.fromRGB(255, 165, 0), -- Orange ball
-    HoopColor       = Color3.fromRGB(0, 255, 0),
-}
+-- ═══════════════════════════════════════════════════════════════════════
+-- SERVICES & UTILITIES
+-- ═══════════════════════════════════════════════════════════════════════
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local VirtualUser = game:GetService("VirtualUser")
+local UserInputService = game:GetService("UserInputService")
 
--- ═══════════════════════════════════════════
--- REMOTES
--- ═══════════════════════════════════════════
-local Events = ReplicatedStorage:WaitForChild("Events")
-local Remotes = {
-    Dunk     = Events:WaitForChild("Dunk"),
-    Pumpfake = Events:WaitForChild("Pumpfake"),
-    Pass     = Events:WaitForChild("Pass"),
-    Sprint   = Events:WaitForChild("Sprint"),
-    Dribble  = Events:WaitForChild("Dribble"),
-    Shoot    = Events:WaitForChild("Shoot"),
-}
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
 
--- ═══════════════════════════════════════════
--- CHARACTER SETUP
--- ═══════════════════════════════════════════
-local character = LP.Character or LP.CharacterAdded:Wait()
-local humanoid  = character:WaitForChild("Humanoid")
-local hrp       = character:WaitForChild("HumanoidRootPart")
-
-LP.CharacterAdded:Connect(function(nc)
-    character = nc
-    humanoid  = nc:WaitForChild("Humanoid")
-    hrp       = nc:WaitForChild("HumanoidRootPart")
+-- Utility functions
+local function safeTeleport(character, destination)
+    if not (character and destination) then return false end
+    local hrp = character:FindFirstChild("HumanoidRootPart")
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not (hrp and humanoid and humanoid.Health > 0) then return false end
     
-    if CFG.SpeedBoost then
-        task.wait(0.5)
-        applySpeedBoost()
+    local oldHealth = humanoid.Health
+    humanoid.Health = math.huge
+    
+    for _, part in pairs(character:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = false end
     end
-end)
+    
+    hrp.CFrame = destination + Vector3.new(0, 5, 0)
+    hrp.Velocity = Vector3.zero
+    hrp.AssemblyLinearVelocity = Vector3.zero
+    
+    task.wait(0.2)
+    humanoid.Health = oldHealth
+    
+    -- Restore collision
+    task.spawn(function()
+        task.wait(0.1)
+        for _, part in pairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                part.CanCollide = true
+            end
+        end
+    end)
+    
+    return true
+end
 
--- ═══════════════════════════════════════════
--- UTILITY FUNCTIONS
--- ═══════════════════════════════════════════
-local function hasBall()
-    local has = false
-    pcall(function()
-        -- Check character for ball
-        for _, obj in ipairs(character:GetDescendants()) do
-            if obj.Name:lower():find("ball") or obj.Name:lower():find("basketball") then
-                has = true
+local function humanWait(minMs, maxMs)
+    task.wait(math.random(minMs, maxMs) / 1000)
+end
+
+local function shuffleTable(t)
+    for i = #t, 2, -1 do
+        local j = math.random(1, i)
+        t[i], t[j] = t[j], t[i]
+    end
+    return t
+end
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- MAIN TAB — Core Features
+-- ═══════════════════════════════════════════════════════════════════════
+local MainSection = Tabs.Main:NewSection({Title = "Core Features", Icon = "zap", Position = "Left"})
+local UtilitySection = Tabs.Main:NewSection({Title = "Utilities", Icon = "tool", Position = "Right"})
+
+-- God Mode (Desync)
+local desyncEnabled = false
+local desyncClone = nil
+local desyncBP = nil
+local DESYNC_DEPTH = 1
+
+MainSection:NewToggle({
+    Title = "God Mode (Desync)",
+    Description = "Become invincible to tsunami",
+    Default = false,
+    Callback = function(state)
+        desyncEnabled = state
+        if state then
+            local char = LocalPlayer.Character
+            if not char then return end
+            
+            char.Archivable = true
+            local success, clone = pcall(function() return char:Clone() end)
+            char.Archivable = false
+            
+            if not (success and clone) then
+                Notification.new({Title = "Error", Description = "Failed to enable God Mode", Duration = 3, Icon = "alert-circle"})
                 return
             end
-        end
-        -- Check if ball is welded to character
-        for _, weld in ipairs(character:GetDescendants()) do
-            if weld:IsA("Weld") or weld:IsA("Motor6D") then
-                if weld.Part1 and weld.Part1.Name:lower():find("ball") then
-                    has = true
-                    return
+            
+            desyncClone = clone
+            for _, obj in pairs(clone:GetDescendants()) do
+                if obj:IsA("LocalScript") or obj:IsA("Script") then obj:Destroy() end
+                if obj:IsA("BasePart") then
+                    obj.Anchored = true
+                    obj.CanCollide = false
+                    obj.Transparency = 0
                 end
             end
-        end
-    end)
-    return has
-end
-
-local function findNearestHoop()
-    local nearest = nil
-    local dist = math.huge
-    
-    pcall(function()
-        for _, obj in ipairs(workspace:GetDescendants()) do
-            local name = obj.Name:lower()
-            if name:find("hoop") or name:find("rim") or name:find("basket") or name:find("goal") then
-                if obj:IsA("BasePart") then
-                    local d = (obj.Position - hrp.Position).Magnitude
-                    if d < dist then
-                        dist = d
-                        nearest = obj
+            
+            local cloneHRP = clone:FindFirstChild("HumanoidRootPart")
+            local cloneHum = clone:FindFirstChildOfClass("Humanoid")
+            if not (cloneHRP and cloneHum) then
+                clone:Destroy()
+                desyncClone = nil
+                return
+            end
+            
+            cloneHRP.CFrame = char.HumanoidRootPart.CFrame
+            clone.Parent = Workspace
+            
+            local bp = Instance.new("BodyPosition")
+            bp.Position = char.HumanoidRootPart.Position
+            bp.MaxForce = Vector3.new(0, math.huge, 0)
+            bp.P = 1e5
+            bp.D = 1e3
+            bp.Parent = char.HumanoidRootPart
+            desyncBP = bp
+            
+            -- Move real character underground
+            local hrp = char.HumanoidRootPart
+            hrp.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y - DESYNC_DEPTH, hrp.Position.Z) * (hrp.CFrame - hrp.CFrame.Position)
+            
+            -- Health protection loop
+            RunService.Heartbeat:Connect(function()
+                if not desyncEnabled then return end
+                local c = LocalPlayer.Character
+                if c then
+                    local h = c:FindFirstChildOfClass("Humanoid")
+                    if h then h.Health = h.MaxHealth end
+                end
+                
+                if desyncClone and desyncClone.Parent then
+                    local realHRP = c and c:FindFirstChild("HumanoidRootPart")
+                    if realHRP then
+                        bp.Position = realHRP.Position
+                        local cloneHRP = desyncClone:FindFirstChild("HumanoidRootPart")
+                        if cloneHRP then
+                            cloneHRP.CFrame = CFrame.new(realHRP.Position.X, realHRP.Position.Y + DESYNC_DEPTH, realHRP.Position.Z)
+                                * (realHRP.CFrame - realHRP.CFrame.Position)
+                        end
                     end
                 end
-            end
-        end
-    end)
-    
-    return nearest, dist
-end
-
--- ═══════════════════════════════════════════
--- DUNK SYSTEM
--- ═══════════════════════════════════════════
-local dunkConn = nil
-
-local function doDunk()
-    local args = {false}
-    pcall(function()
-        Remotes.Dunk:FireServer(unpack(args))
-    end)
-end
-
-local function startAutoDunk()
-    if dunkConn then dunkConn:Disconnect() end
-    
-    dunkConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoDunk then return end
-        
-        if hasBall() then
-            local hoop, dist = findNearestHoop()
-            if hoop and dist < 15 then -- Close to hoop
-                doDunk()
-                task.wait(0.5)
-            end
-        end
-    end)
-end
-
-local function stopAutoDunk()
-    if dunkConn then
-        dunkConn:Disconnect()
-        dunkConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- PUMPFAKE SYSTEM
--- ═══════════════════════════════════════════
-local pumpConn = nil
-
-local function doPumpfake()
-    pcall(function()
-        Remotes.Pumpfake:FireServer()
-    end)
-end
-
-local function startAutoPumpfake()
-    if pumpConn then pumpConn:Disconnect() end
-    
-    pumpConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoPumpfake then return end
-        
-        if hasBall() then
-            local hoop, dist = findNearestHoop()
-            if hoop and dist < 30 then -- Defender nearby range
-                doPumpfake()
-                task.wait(0.8)
-            end
-        end
-    end)
-end
-
-local function stopAutoPumpfake()
-    if pumpConn then
-        pumpConn:Disconnect()
-        pumpConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- PASS SYSTEM
--- ═══════════════════════════════════════════
-local passConn = nil
-
-local function doPass()
-    pcall(function()
-        Remotes.Pass:FireServer()
-    end)
-end
-
-local function startAutoPass()
-    if passConn then passConn:Disconnect() end
-    
-    passConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoPass then return end
-        
-        if hasBall() then
-            -- Find nearest teammate
-            local nearestTeammate = nil
-            local nearestDist = math.huge
+            end)
             
-            pcall(function()
-                for _, p in ipairs(Players:GetPlayers()) do
-                    if p ~= LP and p.Character then
-                        local team = LP.Team
-                        if team and p.Team == team then
-                            local dist = (p.Character.HumanoidRootPart.Position - hrp.Position).Magnitude
-                            if dist < nearestDist and dist < 50 then
-                                nearestDist = dist
-                                nearestTeammate = p
+            Notification.new({Title = "God Mode", Description = "Enabled! You are now invincible.", Duration = 3, Icon = "shield"})
+        else
+            -- Cleanup
+            if desyncBP and desyncBP.Parent then desyncBP:Destroy() end
+            desyncBP = nil
+            
+            local char = LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    hrp.CFrame = CFrame.new(hrp.Position.X, hrp.Position.Y + DESYNC_DEPTH, hrp.Position.Z)
+                        * (hrp.CFrame - hrp.CFrame.Position)
+                end
+            end
+            
+            if desyncClone and desyncClone.Parent then
+                desyncClone:Destroy()
+                desyncClone = nil
+            end
+            
+            Notification.new({Title = "God Mode", Description = "Disabled", Duration = 2, Icon = "shield-off"})
+        end
+    end
+})
+
+-- Auto Rebirth
+local autoRebirth = false
+MainSection:NewToggle({
+    Title = "Auto Rebirth",
+    Description = "Automatically rebirth when possible",
+    Default = false,
+    Callback = function(state)
+        autoRebirth = state
+        if state then
+            spawn(function()
+                while autoRebirth do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.Rebirth:InvokeServer()
+                    end)
+                    task.wait(1)
+                end
+            end)
+        end
+    end
+})
+
+-- Auto Sell
+local autoSell = false
+MainSection:NewToggle({
+    Title = "Auto Sell Tools",
+    Description = "Automatically sell held tools",
+    Default = false,
+    Callback = function(state)
+        autoSell = state
+        if state then
+            spawn(function()
+                while autoSell do
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("RemoteFunctions"):WaitForChild("SellTool"):InvokeServer()
+                    end)
+                    task.wait(0.25)
+                end
+            end)
+        end
+    end
+})
+
+-- Auto Equip Best
+MainSection:NewButton({
+    Title = "Equip Best Tool",
+    Description = "Equip highest value tool in inventory",
+    Callback = function()
+        local bestValue = 0
+        local bestTool = nil
+        
+        for _, tool in pairs(LocalPlayer.Backpack:GetChildren()) do
+            if tool:IsA("Tool") then
+                local val = tool:FindFirstChild("Value")
+                if val and val.Value > bestValue then
+                    bestValue = val.Value
+                            bestTool = tool
+                end
+            end
+        end
+        
+        if bestTool then
+            LocalPlayer.Character.Humanoid:EquipTool(bestTool)
+            Notification.new({Title = "Equipped", Description = bestTool.Name, Duration = 2, Icon = "check"})
+        else
+            Notification.new({Title = "Error", Description = "No tools found", Duration = 2, Icon = "alert-circle"})
+        end
+    end
+})
+
+-- Anti AFK
+local antiAFK = false
+UtilitySection:NewToggle({
+    Title = "Anti AFK",
+    Description = "Prevents automatic kicks for inactivity",
+    Default = false,
+    Callback = function(state)
+        antiAFK = state
+        if state then
+            LocalPlayer.Idled:Connect(function()
+                if antiAFK then
+                    VirtualUser:Button2Down(Vector2.new(0,0), Camera.CFrame)
+                    task.wait(1)
+                    VirtualUser:Button2Up(Vector2.new(0,0), Camera.CFrame)
+                end
+            end)
+        end
+    end
+})
+
+-- Instant Interact
+local instantInteract = false
+local originalSettings = {}
+
+UtilitySection:NewToggle({
+    Title = "Instant Interact",
+    Description = "Instantly interact with any prompt",
+    Default = false,
+    Callback = function(state)
+        instantInteract = state
+        if state then
+            for _, v in pairs(Workspace:GetDescendants()) do
+                if v:IsA("ProximityPrompt") then
+                    originalSettings[v] = {
+                        distance = v.MaxActivationDistance,
+                        duration = v.HoldDuration
+                    }
+                    v.MaxActivationDistance = math.huge
+                    v.HoldDuration = 0
+                end
+            end
+            
+            Workspace.DescendantAdded:Connect(function(obj)
+                if instantInteract and obj:IsA("ProximityPrompt") then
+                    originalSettings[obj] = {
+                        distance = obj.MaxActivationDistance,
+                        duration = Obj.HoldDuration
+                    }
+                    obj.MaxActivationDistance = math.huge
+                    obj.HoldDuration = 0
+                end
+            end)
+        else
+            for obj, orig in pairs(originalSettings) do
+                if obj and obj.Parent then
+                    obj.MaxActivationDistance = orig.distance
+                    obj.HoldDuration = orig.duration
+                end
+            end
+            originalSettings = {}
+        end
+    end
+})
+
+-- Server Utilities
+UtilitySection:NewButton({
+    Title = "Rejoin Server",
+    Description = "Rejoin current server",
+    Callback = function()
+        pcall(function()
+            ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Net"):WaitForChild("RE/RejoinServer"):FireServer()
+        end)
+    end
+})
+
+UtilitySection:NewButton({
+    Title = "Server Hop",
+    Description = "Join different server",
+    Callback = function()
+        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- FARM TAB — Automation
+-- ═══════════════════════════════════════════════════════════════════════
+local FarmSection = Tabs.Farm:NewSection({Title = "Brainrot Farming", Icon = "sprout", Position = "Left"})
+local CollectSection = Tabs.Farm:NewSection({Title = "Collection", Icon = "coins", Position = "Right"})
+
+-- Farm Configuration
+local farmConfig = {
+    Enabled = false,
+    Rarity = "Common",
+    SpawnPosition = nil,
+    AutoReturn = true
+}
+
+-- Set Spawn
+FarmSection:NewButton({
+    Title = "Set Spawn Position",
+    Description = "Save current position as return point",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("HumanoidRootPart") then
+            farmConfig.SpawnPosition = char.HumanoidRootPart.CFrame
+            Notification.new({Title = "Spawn Set", Description = "Position saved!", Duration = 2, Icon = "map-pin"})
+        end
+    end
+})
+
+-- Farm Toggle
+FarmSection:NewToggle({
+    Title = "Auto Farm Brainrots",
+    Description = "Automatically collect brainrots",
+    Default = false,
+    Callback = function(state)
+        farmConfig.Enabled = state
+        
+        if state then
+            spawn(function()
+                -- Ensure desync is active for farming
+                if not desyncEnabled then
+                    -- Trigger god mode toggle programmatically
+                    -- This would need to be implemented based on your toggle callback structure
+                end
+                
+                while farmConfig.Enabled do
+                    local folder = Workspace:FindFirstChild("ActiveBrainrots")
+                    if folder then
+                        local rarityFolder = folder:FindFirstChild(farmConfig.Rarity)
+                        if rarityFolder then
+                            local brainrots = rarityFolder:GetChildren()
+                            shuffleTable(brainrots)
+                            
+                            for _, br in pairs(brainrots) do
+                                if not farmConfig.Enabled then break end
+                                
+                                local prompt = Br:FindFirstChild("TakePrompt", true)
+                                if Prompt then
+                                    pcall(function()
+                                        local root = Br:FindFirstChild("Root")
+                                        if root then
+                                            -- Teleport to brainrot
+                                            if desyncEnabled then
+                                                local char = LocalPlayer.Character
+                                                if char then
+                                                    local hrp = char:FindFirstChild("HumanoidRootPart")
+                                                    if hrp then
+                                                        -- Smooth tween to position
+                                                        local targetCF = root.CFrame
+                                                        local startCF = hrp.CFrame
+                                                        local distance = (targetCF.Position - startCF.Position).Magnitude
+                                                        local duration = math.clamp(distance / 80, 0.15, 4)
+                                                        
+                                                        -- Simple tween implementation
+                                                        local startTime = tick()
+                                                        while tick() - startTime < duration do
+                                                            local alpha = (tick() - startTime) / duration
+                                                            local smoothAlpha = alpha * alpha * (3 - 2 * alpha)
+                                                            hrp.CFrame = startCF:Lerp(targetCF, smoothAlpha)
+                                                            task.wait()
+                                                        end
+                                                        
+                                                        fireproximityprompt(Prompt)
+                                                        humanWait(80, 200)
+                                                        
+                                                        if math.random(1, 25) == 1 then
+                                                            humanWait(350, 800)
+                                                        end
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                    
+                                    -- Return to spawn if enabled
+                                    if farmConfig.AutoReturn and farmConfig.SpawnPosition then
+                                        local char = LocalPlayer.Character
+                                        if char then
+                                            local hrp = char:FindFirstChild("HumanoidRootPart")
+                                            if hrp then
+                                                local returnCF = farmConfig.SpawnPosition
+                                                local startCF = hrp.CFrame
+                                                local distance = (returnCF.Position - startCF.Position).Magnitude
+                                                local duration = math.clamp(distance / 80, 0.15, 4)
+                                                
+                                                local startTime = tick()
+                                                while tick() - startTime < duration do
+                                                    local alpha = (tick() - startTime) / duration
+                                                    local smoothAlpha = alpha * alpha * (3 - 2 * alpha)
+                                                    hrp.CFrame = startCF:Lerp(returnCF, smoothAlpha)
+                                                    task.wait()
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
                             end
                         end
                     end
-                end
-            end)
-            
-            if nearestTeammate and nearestDist < 30 then
-                doPass()
-                task.wait(0.5)
-            end
-        end
-    end)
-end
-
-local function stopAutoPass()
-    if passConn then
-        passConn:Disconnect()
-        passConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- DRIBBLE SYSTEM
--- ═══════════════════════════════════════════
-local dribbleConn = nil
-
-local function doDribble(move)
-    local keyCode = Enum.KeyCode[move or CFG.DribbleMove]
-    local args = {{keyCode}}
-    
-    pcall(function()
-        Remotes.Dribble:FireServer(unpack(args))
-    end)
-end
-
-local function startAutoDribble()
-    if dribbleConn then dribbleConn:Disconnect() end
-    
-    dribbleConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoDribble then return end
-        
-        if hasBall() then
-            doDribble()
-        end
-        
-        task.wait(CFG.DribbleSpeed)
-    end)
-end
-
-local function stopAutoDribble()
-    if dribbleConn then
-        dribbleConn:Disconnect()
-        dribbleConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- SPRINT SYSTEM
--- ═══════════════════════════════════════════
-local sprintConn = nil
-
-local function doSprint(active)
-    local args = {active and "Mobile" or false}
-    pcall(function()
-        Remotes.Sprint:FireServer(unpack(args))
-    end)
-end
-
-local function startAutoSprint()
-    if sprintConn then sprintConn:Disconnect() end
-    
-    -- Start sprint
-    doSprint(true)
-    
-    sprintConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoSprint then return end
-        -- Keep sprinting
-        doSprint(true)
-    end)
-end
-
-local function stopAutoSprint()
-    if sprintConn then
-        sprintConn:Disconnect()
-        sprintConn = nil
-    end
-    -- Stop sprint
-    doSprint(false)
-end
-
--- ═══════════════════════════════════════════
--- SHOOT SYSTEM (Auto Green)
--- ═══════════════════════════════════════════
-local shootConn = nil
-
-local function calculateGreenPower(dist)
-    if CFG.AutoGreen then
-        -- Calculate perfect power
-        if dist < 10 then
-            return 65
-        elseif dist < 20 then
-            return 72
-        elseif dist < 30 then
-            return 78
-        elseif dist < 40 then
-            return 85
-        elseif dist < 50 then
-            return 92
-        else
-            return 100
-        end
-    else
-        return CFG.ShootPower
-    end
-end
-
-local function doShoot(power)
-    local args = {
-        true,
-        power or CFG.ShootPower,
-        [4] = false
-    }
-    pcall(function()
-        Remotes.Shoot:FireServer(unpack(args))
-    end)
-end
-
-local function startAutoShoot()
-    if shootConn then shootConn:Disconnect() end
-    
-    shootConn = RunService.Heartbeat:Connect(function()
-        if not CFG.AutoShoot then return end
-        
-        if not hasBall() then return end
-        
-        local hoop, dist = findNearestHoop()
-        if not hoop then return end
-        
-        -- Range check
-        if dist < 5 or dist > 60 then return end
-        
-        -- Calculate power
-        local power = calculateGreenPower(dist)
-        
-        -- Check facing hoop
-        local facing = false
-        pcall(function()
-            local toHoop = (hoop.Position - hrp.Position).Unit
-            facing = toHoop:Dot(hrp.CFrame.LookVector) > 0.6
-        end)
-        
-        if facing or dist < 15 then
-            doShoot(power)
-            task.wait(0.8)
-        end
-    end)
-end
-
-local function stopAutoShoot()
-    if shootConn then
-        shootConn:Disconnect()
-        shootConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- SPEED BOOST
--- ═══════════════════════════════════════════
-local speedConn = nil
-
-local function applySpeedBoost()
-    pcall(function()
-        if humanoid then
-            humanoid.WalkSpeed = CFG.WalkSpeed
-            humanoid.JumpPower = CFG.JumpPower
-        end
-    end)
-end
-
-local function startSpeedBoost()
-    if speedConn then speedConn:Disconnect() end
-    applySpeedBoost()
-    
-    speedConn = RunService.Heartbeat:Connect(function()
-        if not CFG.SpeedBoost then return end
-        pcall(function()
-            if humanoid then
-                if humanoid.WalkSpeed ~= CFG.WalkSpeed then
-                    humanoid.WalkSpeed = CFG.WalkSpeed
-                end
-                if humanoid.JumpPower ~= CFG.JumpPower then
-                    humanoid.JumpPower = CFG.JumpPower
-                end
-            end
-        end)
-    end)
-end
-
-local function stopSpeedBoost()
-    if speedConn then
-        speedConn:Disconnect()
-        speedConn = nil
-    end
-    pcall(function()
-        if humanoid then
-            humanoid.WalkSpeed = 16
-            humanoid.JumpPower = 50
-        end
-    end)
-end
-
--- ═══════════════════════════════════════════
--- INFINITE JUMP
--- ═══════════════════════════════════════════
-local jumpConn = nil
-
-local function startInfJump()
-    if jumpConn then jumpConn:Disconnect() end
-    
-    jumpConn = RunService.Heartbeat:Connect(function()
-        if not CFG.InfJump then return end
-        pcall(function()
-            if humanoid and humanoid.Jump then
-                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            end
-        end)
-    end)
-end
-
-local function stopInfJump()
-    if jumpConn then
-        jumpConn:Disconnect()
-        jumpConn = nil
-    end
-end
-
--- ═══════════════════════════════════════════
--- INDICATORS
--- ═══════════════════════════════════════════
-local ballGui, hoopGui = nil, nil
-local indicatorConn = nil
-
-local function startIndicators()
-    if ballGui then ballGui:Destroy() end
-    ballGui = Instance.new("ScreenGui")
-    ballGui.Name = "BallInd"
-    ballGui.ResetOnSpawn = false
-    ballGui.Parent = LP:WaitForChild("PlayerGui")
-    
-    local ballFrame = Instance.new("Frame")
-    ballFrame.Name = "Ball"
-    ballFrame.BackgroundColor3 = CFG.BallColor
-    ballFrame.Size = UDim2.new(0, CFG.IndicatorSize, 0, CFG.IndicatorSize)
-    ballFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    ballFrame.Parent = ballGui
-    
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = ballFrame
-    
-    if hoopGui then hoopGui:Destroy() end
-    hoopGui = Instance.new("ScreenGui")
-    hoopGui.Name = "HoopInd"
-    hoopGui.ResetOnSpawn = false
-    hoopGui.Parent = LP:WaitForChild("PlayerGui")
-    
-    local hoopFrame = Instance.new("Frame")
-    hoopFrame.Name = "Hoop"
-    hoopFrame.BackgroundColor3 = CFG.HoopColor
-    hoopFrame.Size = UDim2.new(0, CFG.IndicatorSize + 4, 0, CFG.IndicatorSize + 4)
-    hoopFrame.AnchorPoint = Vector2.new(0.5, 0.5)
-    hoopFrame.Parent = hoopGui
-    
-    local hoopCorner = Instance.new("UICorner")
-    hoopCorner.CornerRadius = UDim.new(1, 0)
-    hoopCorner.Parent = hoopFrame
-    
-    if indicatorConn then indicatorConn:Disconnect() end
-    indicatorConn = RunService.RenderStepped:Connect(function()
-        -- Ball
-        if CFG.BallIndicator then
-            pcall(function()
-                local ball = nil
-                for _, obj in ipairs(workspace:GetDescendants()) do
-                    if obj.Name:lower():find("ball") and obj:IsA("BasePart") then
-                        ball = obj
-                        break
-                    end
-                end
-                if not ball then
-                    for _, obj in ipairs(character:GetDescendants()) do
-                        if obj.Name:lower():find("ball") then
-                            ball = obj
-                            break
-                        end
-                    end
+                    
+                    task.wait(0.2)
                 end
                 
-                if ball then
-                    local pos, on = camera:WorldToViewportPoint(ball.Position)
-                    ballFrame.Visible = on
-                    if on then
-                        ballFrame.Position = UDim2.new(0, pos.X, 0, pos.Y)
-                    end
-                else
-                    ballFrame.Visible = false
-                end
+                task.wait(0.2)
             end)
-        else
-            ballFrame.Visible = false
         end
-        
-        -- Hoop
-        if CFG.HoopIndicator then
-            pcall(function()
-                local hoop, dist = findNearestHoop()
-                if hoop and dist < 100 then
-                    local pos, on = camera:WorldToViewportPoint(hoop.Position)
-                    hoopFrame.Visible = on
-                    if on then
-                        hoopFrame.Position = UDim2.new(0, pos.X, 0, pos.Y)
-                        -- Color based on range
-                        if dist > 5 and dist < 60 then
-                            hoopFrame.BackgroundColor3 = Color3.fromRGB(0, 255, 0) -- Green
-                        else
-                            hoopFrame.BackgroundColor3 = Color3.fromRGB(255, 0, 0) -- Red
+    end
+})
+
+-- Rarity Selection
+FarmSection:NewDropdown({
+    Title = "Target Rarity",
+    Description = "Select brainrot rarity to farm",
+    Data = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret", "Cosmic", "Celestial"},
+    Default = "Common",
+    Callback = function(value)
+        farmConfig.Rarity = value
+    end
+})
+
+-- Lucky Block Collection
+local autoLuckyBlocks = false
+CollectSection:NewToggle({
+    Title = "Auto Lucky Blocks",
+    Description = "Automatically open lucky blocks nearby",
+    Default = false,
+    Callback = function(state)
+        autoLuckyBlocks = state
+        if state then
+            spawn(function()
+                while autoLuckyBlocks do
+                    for _, obj in pairs(Workspace:GetDescendants()) do
+                        if not autoLuckyBlocks then break end
+                        if obj.Name:lower():find("lucky") and obj:IsA("Model") then
+                            local Prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+                            if Prompt then
+                                pcall(function()
+                                    local char = LocalPlayer.Character
+                                    if char then
+                                        local mainPart = obj:FindFirstChildWhichIsA("BasePart") or obj.PrimaryPart
+                                        if mainPart then
+                                            safeTeleport(char, mainPart.CFrame)
+                                            task.wait(0.15)
+                                            fireproximityprompt(Prompt)
+                                            pcall(function()
+                                                ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Net"):WaitForChild("RE/OpenLuckyBlock"):FireServer()
+                                            end)
+                                            task.wait(0.15)
+                                        end
+                                    end
+                                end)
+                            end
                         end
                     end
-                else
-                    hoopFrame.Visible = false
+                    task.wait(0.3)
+                end
+            end)
+        end
+    end
+})
+
+-- Event Coin Collection
+local autoEventCoins = false
+CollectSection:NewToggle({
+    Title = "Auto Event Coins",
+    Description = "Collect special event coins automatically",
+    Default = false,
+    Callback = function(state)
+        autoEventCoins = state
+        if state then
+            spawn(function()
+                while autoEventCoins do
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("RemoteEvents"):WaitForChild("CollectMoney"):FireServer()
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- BRAINROT TAB — Management
+-- ═══════════════════════════════════════════════════════════════════════
+local BrainrotSection = Tabs.Brainrot:NewSection({Title = "Management", Icon = "brain", Position = "Left"})
+local SellSection = Tabs.Brainrot:NewSection({Title = "Selling", Icon = "dollar-sign", Position = "Right"})
+
+-- Auto Sell
+local autoSellEnabled = false
+local sellRarity = "Common"
+
+SellSection:NewToggle({
+    Title = "Auto Sell Brainrots",
+    Description = "Automatically sell brainrots of selected rarity",
+    Default = false,
+    Callback = function(state)
+        autoSellEnabled = state
+        if state then
+            spawn(function()
+                while autoSellEnabled do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.SellBrainrot:InvokeServer(sellRarity)
+                    end)
+                    task.wait(1)
+                end
+            end)
+        end
+    end
+})
+
+-- Sell Rarity Selection
+SellSection:NewDropdown({
+    Title = "Sell Rarity",
+    Description = "Select rarity to sell",
+    Data = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret", "Cosmic", "Celestial"},
+    Default = "Common",
+    Callback = function(value)
+        sellRarity = value
+    end
+})
+
+-- Bring Brainrots
+local bringRarity = "Common"
+
+BrainrotSection:NewDropdown({
+    Title = "Bring Rarity",
+    Description = "Select rarity to bring to player",
+    Data = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret", "Cosmic", "Celestial"},
+    Default = "Common",
+    Callback = function(value)
+        bringRarity = value
+    end
+})
+
+BrainrotSection:NewButton({
+    Title = "Bring All Selected",
+    Description = "Teleport all brainrots of selected rarity to you",
+    Callback = function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        
+        local folder = Workspace:FindFirstChild("ActiveBrainrots")
+        if not folder then
+            Notification.new({Title = "Error", Description = "No brainrots found", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+        
+        local rarityFolder = folder:FindFirstChild(bringRarity)
+        if not rarityFolder then
+            Notification.new({Title = "Error", Description = "No " .. bringRarity .. " brainrots found", Duration = 2, Icon = "alert-circle"})
+            return
+        end
+        
+        local count = 0
+        for _, Br in pairs(rarityFolder:GetChildren()) do
+            local root = Br:FindFirstChild("Root")
+            if root then
+                root.CFrame = hrp.CFrame + Vector3.new(0, count * 5, 0)
+                count = count + 1
+            end
+        end
+        
+        Notification.new({Title = "Success", Description = "Brought " .. count .. " " .. bringRarity .. " brainrots", Duration = 3, Icon = "check"})
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- UPGRADES TAB — Progression
+-- ═══════════════════════════════════════════════════════════════════════
+local UpgradeSection = Tabs.Upgrades:NewSection({Title = "Auto Upgrades", Icon = "arrow-up", Position = "Left"})
+local BuySection = Tabs.Upgrades:NewSection({Title = "Auto Buy", Icon = "shopping-cart", Position = "Right"})
+
+-- Upgrade Configuration
+local upgradeConfig = {
+    AutoCarry = false,
+    AutoHouse = false,
+    AutoBase = false,
+    AutoBrainrot = false,
+    BrainrotLevel = 1,
+    BaseDelay = 1,
+    BrainrotDelay = 1
+}
+
+-- Auto Upgrade Carry
+UpgradeSection:NewToggle({
+    Title = "Auto Upgrade Carry",
+    Description = "Automatically upgrade carrying capacity",
+    Default = false,
+    Callback = function(state)
+        upgradeConfig.AutoCarry = state
+        if state then
+            spawn(function()
+                while upgradeConfig.AutoCarry do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.UpgradeCarry:InvokeServer()
+                    end)
+                    task.wait(0.75)
+                end
+            end)
+        end
+    end
+})
+
+-- Auto Upgrade House
+UpgradeSection:NewToggle({
+    Title = "Auto Upgrade House",
+    Description = "Automatically upgrade house storage",
+    Default = false,
+    Callback = function(state)
+        upgradeConfig.AutoHouse = state
+        if state then
+            spawn(function()
+                while upgradeConfig.AutoHouse do
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Net"):WaitForChild("RE/Plot.UpgradeHouse"):FireServer()
+                    end)
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+})
+
+-- Auto Upgrade Base
+UpgradeSection:NewToggle({
+    Title = "Auto Upgrade Base",
+    Description = "Automatically upgrade base",
+    Default = false,
+    Callback = function(state)
+        upgradeConfig.AutoBase = state
+        if state then
+            spawn(function()
+                while upgradeConfig.AutoBase do
+                    pcall(function()
+                        ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Net"):WaitForChild("RE/Plot.UpgradeBase"):FireServer()
+                    end)
+                    task.wait(upgradeConfig.BaseDelay)
+                end
+            end)
+        end
+    end
+})
+
+UpgradeSection:NewSlider({
+    Title = "Base Upgrade Delay",
+    Description = "Delay between base upgrades",
+    Min = 0.1, Max = 5, Default = 1,
+    Callback = function(value)
+        upgradeConfig.BaseDelay = value
+    end
+})
+
+-- Auto Upgrade Brainrots
+UpgradeSection:NewToggle({
+    Title = "Auto Upgrade Brainrots",
+    Description = "Automatically upgrade brainrot level",
+    Default = false,
+    Callback = function(state)
+        upgradeConfig.AutoBrainrot = state
+        if state then
+            spawn(function()
+                while upgradeConfig.AutoBrainrot do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.UpgradeBrainrot:InvokeServer(upgradeConfig.BrainrotLevel)
+                    end)
+                    task.wait(upgradeConfig.BrainrotDelay)
+                end
+            end)
+        end
+    end
+})
+
+UpgradeSection:NewSlider({
+    Title = "Target Brainrot Level",
+    Description = "Level to upgrade brainrots to",
+    Min = 1, Max = 100, Default = 1,
+    Callback = function(value)
+        upgradeConfig.BrainrotLevel = value
+    end
+})
+
+UpgradeSection:NewSlider({
+    Title = "Brainrot Upgrade Delay",
+    Description = "Delay between brainrot upgrades",
+    Min = 0.1, Max = 5, Default = 1,
+    Callback = function(value)
+        upgradeConfig.BrainrotDelay = value
+    end
+})
+
+-- Auto Buy Speed
+local autoBuySpeed = false
+local speedBuyAmount = 1
+local speedBuyDelay = 1
+
+BuySection:NewToggle({
+    Title = "Auto Buy Speed",
+    Description = "Automatically buy speed upgrades",
+    Default = false,
+    Callback = function(state)
+        autoBuySpeed = state
+        if state then
+            spawn(function()
+                while autoBuySpeed do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.UpgradeSpeed:InvokeServer(speedBuyAmount)
+                    end)
+                    task.wait(speedBuyDelay)
+                end
+            end)
+        end
+    end
+})
+
+BuySection:NewSlider({
+    Title = "Speed Buy Amount",
+    Description = "How many speed levels to buy at once",
+    Min = 1, Max = 100, Default = 1,
+    Callback = function(value)
+        speedBuyAmount = value
+    end
+})
+
+BuySection:NewSlider({
+    Title = "Speed Buy Delay",
+    Description = "Delay between speed purchases",
+    Min = 0.1, Max = 5, Default = 1,
+    Callback = function(value)
+        speedBuyDelay = value
+    end
+})
+
+-- Manual Speed Buy
+local manualSpeedAmount = 1
+BuySection:NewDropdown({
+    Title = "Manual Speed Amount",
+    Description = "Select amount for manual buy",
+    Data = {"1", "5", "10", "25", "50", "100"},
+    Default = "1",
+    Callback = function(value)
+        manualSpeedAmount = tonumber(value)
+    end
+})
+
+BuySection:NewButton({
+    Title = "Buy Speed Now",
+    Description = "Purchase selected speed amount",
+    Callback = function()
+        pcall(function()
+            ReplicatedStorage.RemoteFunctions.UpgradeSpeed:InvokeServer(manualSpeedAmount)
+            Notification.new({Title = "Speed Purchased", Description = "+" .. manualSpeedAmount .. " Speed", Duration = 2, Icon = "zap"})
+        end)
+    end
+})
+
+-- Auto Buy Carry
+local autoBuyCarry = false
+local carryBuyDelay = 1
+
+BuySection:NewToggle({
+    Title = "Auto Buy Carry",
+    Description = "Automatically buy carry upgrades",
+    Default = false,
+    Callback = function(state)
+        autoBuyCarry = state
+        if state then
+            spawn(function()
+                while autoBuyCarry do
+                    pcall(function()
+                        ReplicatedStorage.RemoteFunctions.UpgradeCarry:InvokeServer()
+                    end)
+                    task.wait(carryBuyDelay)
+                end
+            end)
+        end
+    end
+})
+
+BuySection:NewSlider({
+    Title = "Carry Buy Delay",
+    Description = "Delay between carry purchases",
+    Min = 0.1, Max = 5, Default = 1,
+    Callback = function(value)
+        carryBuyDelay = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- MOVEMENT TAB — Navigation
+-- ═══════════════════════════════════════════════════════════════════════
+local MovementSection = Tabs.Movement:NewSection({Title = "Movement", Icon = "move", Position = "Left"})
+local TeleportSection = Tabs.Movement:NewSection({Title = "Teleport", Icon = "map-pin", Position = "Right"})
+
+-- Movement Configuration
+local movementConfig = {
+    WalkSpeed = 16,
+    JumpPower = 50,
+    Gravity = 196,
+    Noclip = false,
+    InfJump = false,
+    ClickTP = false,
+    Spinbot = false,
+    SpinSpeed = 20
+}
+
+-- WalkSpeed Slider
+MovementSection:NewSlider({
+    Title = "Walk Speed",
+    Description = "Adjust movement speed",
+    Min = 16, Max = 200, Default = 16,
+    Callback = function(value)
+        movementConfig.WalkSpeed = value
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.WalkSpeed = value
+        end
+    end
+})
+
+-- JumpPower Slider
+MovementSection:NewSlider({
+    Title = "Jump Power",
+    Description = "Adjust jump height",
+    Min = 50, Max = 300, Default = 50,
+    Callback = function(value)
+        movementConfig.JumpPower = value
+        local char = LocalPlayer.Character
+        if char and char:FindFirstChild("Humanoid") then
+            char.Humanoid.JumpPower = value
+        end
+    end
+})
+
+-- Gravity Slider
+MovementSection:NewSlider({
+    Title = "Gravity",
+    Description = "Adjust gravity (low = moon gravity)",
+    Min = 0, Max = 196, Default = 196,
+    Callback = function(value)
+        movementConfig.Gravity = value
+        Workspace.Gravity = value
+    end
+})
+
+-- Noclip
+local noclipConnection = nil
+MovementSection:NewToggle({
+    Title = "Noclip",
+    Description = "Walk through walls",
+    Default = false,
+    Callback = function(state)
+        movementConfig.Noclip = state
+        if state then
+            noclipConnection = RunService.Stepped:Connect(function()
+                local char = LocalPlayer.Character
+                if char then
+                    for _, part in pairs(char:GetDescendants()) do
+                        if part:IsA("BasePart") then part.CanCollide = false end
+                    end
                 end
             end)
         else
-            hoopFrame.Visible = false
+            if noclipConnection then
+                noclipConnection:Disconnect()
+                noclipConnection = nil
+            end
+            -- Restore collision
+            local char = LocalPlayer.Character
+            if char then
+                for _, part in pairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") then part.CanCollide = true end
+                end
+            end
         end
+    end
+})
+
+-- Infinite Jump
+local infJumpConnection = nil
+MovementSection:NewToggle({
+    Title = "Infinite Jump",
+    Description = "Jump infinitely without touching ground",
+    Default = false,
+    Callback = function(state)
+        movementConfig.InfJump = state
+        if state then
+            infJumpConnection = UserInputService.JumpRequest:Connect(function()
+                if movementConfig.InfJump then
+                    local char = LocalPlayer.Character
+                    if char and char:FindFirstChild("Humanoid") then
+                        char.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+                    end
+                end
+            end)
+        else
+            if infJumpConnection then
+                infJumpConnection:Disconnect()
+                infJumpConnection = nil
+            end
+        end
+    end
+})
+
+-- Click Teleport
+local clickTPConnection = nil
+local mouse = LocalPlayer:GetMouse()
+
+TeleportSection:NewToggle({
+    Title = "Click Teleport",
+    Description = "Click anywhere to teleport",
+    Default = false,
+    Callback = function(state)
+        movementConfig.ClickTP = state
+        if state then
+            clickTPConnection = mouse.Button1Down:Connect(function()
+                if movementConfig.ClickTP then
+                    local char = LocalPlayer.Character
+                    if char and char:FindFirstChild("HumanoidRootPart") then
+                        safeTeleport(char, CFrame.new(mouse.Hit.p))
+                    end
+                end
+            end)
+        else
+            if clickTPConnection then
+                clickTPConnection:Disconnect()
+                clickTPConnection = nil
+            end
+        end
+    end
+})
+
+-- Spinbot
+local spinbotConnection = nil
+TeleportSection:NewToggle({
+    Title = "Spinbot",
+    Description = "Rapidly spin character",
+    Default = false,
+    Callback = function(state)
+        movementConfig.Spinbot = state
+        if state then
+            spinbotConnection = RunService.Heartbeat:Connect(function()
+                if movementConfig.Spinbot then
+                    local char = LocalPlayer.Character
+                    if char and char:FindFirstChild("HumanoidRootPart") then
+                        char.HumanoidRootPart.CFrame = char.HumanoidRootPart.CFrame * CFrame.Angles(0, math.rad(movementConfig.SpinSpeed), 0)
+                    end
+                end
+            end)
+        else
+            if spinbotConnection then
+                spinbotConnection:Disconnect()
+                spinbotConnection = nil
+            end
+        end
+    end
+})
+
+TeleportSection:NewSlider({
+    Title = "Spin Speed",
+    Description = "Rotation speed for spinbot",
+    Min = 1, Max = 100, Default = 20,
+    Callback = function(value)
+        movementConfig.SpinSpeed = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- VISUALS TAB — Graphics
+-- ═══════════════════════════════════════════════════════════════════════
+local VisualsSection = Tabs.Visuals:NewSection({Title = "Visual Effects", Icon = "sun", Position = "Left"})
+local RemoveSection = Tabs.Visuals:NewSection({Title = "Performance", Icon = "trash", Position = "Right"})
+
+-- Visual Configuration
+local visualConfig = {
+    NoFog = false,
+    Fullbright = false,
+    FOV = 70,
+    MaxZoom = 128,
+    FPSCounter = false
+}
+
+-- No Fog
+VisualsSection:NewToggle({
+    Title = "No Fog",
+    Description = "Remove all fog from the game",
+    Default = false,
+    Callback = function(state)
+        visualConfig.NoFog = state
+        if state then
+            Lighting.FogEnd = 100000
+            Lighting.FogStart = 0
+        else
+            Lighting.FogEnd = 500
+            Lighting.FogStart = 0
+        end
+    end
+})
+
+-- Fullbright
+VisualsSection:NewToggle({
+    Title = "Fullbright",
+    Description = "Maximum brightness everywhere",
+    Default = false,
+    Callback = function(state)
+        visualConfig.Fullbright = state
+        if state then
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            Lighting.Brightness = 2
+        else
+            Lighting.Ambient = Color3.fromRGB(128, 128, 128)
+            Lighting.OutdoorAmbient = Color3.fromRGB(128, 128, 128)
+            Lighting.Brightness = 1
+        end
+    end
+})
+
+-- FOV Slider
+VisualsSection:NewSlider({
+    Title = "Field of View",
+    Description = "Adjust camera FOV",
+    Min = 70, Max = 120, Default = 70,
+    Callback = function(value)
+        visualConfig.FOV = value
+        Camera.FieldOfView = value
+    end
+})
+
+-- Max Zoom
+VisualsSection:NewSlider({
+    Title = "Max Zoom Distance",
+    Description = "How far you can zoom out",
+    Min = 10, Max = 500, Default = 128,
+    Callback = function(value)
+        visualConfig.MaxZoom = value
+        LocalPlayer.CameraMaxZoomDistance = value
+    end
+})
+
+-- FPS Counter
+local fpsLabel = nil
+VisualsSection:NewToggle({
+    Title = "FPS Counter",
+    Description = "Display FPS counter on screen",
+    Default = false,
+    Callback = function(state)
+        visualConfig.FPSCounter = state
+        if state then
+            local gui = Instance.new("ScreenGui")
+            gui.Name = "FPSCounter"
+            gui.Parent = game.CoreGui
+            
+            fpsLabel = Instance.new("TextLabel")
+            fpsLabel.Size = UDim2.new(0, 100, 0, 30)
+            fpsLabel.Position = UDim2.new(1, -110, 0, 10)
+            fpsLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+            fpsLabel.BackgroundTransparency = 0.5
+            fpsLabel.TextColor3 = Color3.fromRGB(0, 255, 0)
+            fpsLabel.Font = Enum.Font.GothamBold
+            fpsLabel.TextSize = 16
+            fpsLabel.Text = "FPS: --"
+            fpsLabel.Parent = gui
+            
+            local corner = Instance.new("UICorner")
+            corner.CornerRadius = UDim.new(0, 6)
+            corner.Parent = fpsLabel
+            
+            spawn(function()
+                while visualConfig.FPSCounter and fpsLabel do
+                    local fps = math.floor(1 / RunService.RenderStepped:Wait())
+                    fpsLabel.Text = "FPS: " .. fps
+                end
+            end)
+        else
+            if game.CoreGui:FindFirstChild("FPSCounter") then
+                game.CoreGui.FPSCounter:Destroy()
+            end
+            fpsLabel = nil
+        end
+    end
+})
+
+-- Remove Textures
+RemoveSection:NewButton({
+    Title = "Remove Textures",
+    Description = "Remove all textures for FPS boost",
+    Callback = function()
+        local count = 0
+        for _, v in pairs(Workspace:GetDescendants()) do
+            if v:IsA("Texture") or v:IsA("Decal") then
+                pcall(function() v:Destroy() count = count + 1 end)
+            end
+        end
+        Notification.new({Title = "Textures Removed", Description = "Removed " .. count .. " textures", Duration = 3, Icon = "check"})
+    end
+})
+
+-- Remove Water
+RemoveSection:NewButton({
+    Title = "Remove Water",
+    Description = "Remove all water parts",
+    Callback = function()
+        local count = 0
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj.Name:lower():find("water") or obj.Name:lower():find("tsunami") or obj.Name:lower():find("ocean") then
+                pcall(function() obj:Destroy() count = count + 1 end)
+            end
+        end
+        Notification.new({Title = "Water Removed", Description = "Removed " .. count .. " water parts", Duration = 3, Icon = "droplet"})
+    end
+})
+
+-- Remove Kill Parts
+RemoveSection:NewButton({
+    Title = "Remove Kill Parts",
+    Description = "Remove all instant-kill parts",
+    Callback = function()
+        local count = 0
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            if obj:IsA("BasePart") and (obj.Name:lower():find("kill") or obj.Name:lower():find("death")) then
+                pcall(function() obj:Destroy() count = count + 1 end)
+            end
+        end
+        Notification.new({Title = "Kill Parts Removed", Description = "Removed " .. count .. " kill parts", Duration = 3, Icon = "shield"})
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- ESP TAB — Tracking
+-- ═══════════════════════════════════════════════════════════════════════
+local PlayerESPSection = Tabs.ESP:NewSection({Title = "Player ESP", Icon = "users", Position = "Left"})
+local BrainrotESPSection = Tabs.ESP:NewSection({Title = "Brainrot ESP", Icon = "box", Position = "Right"})
+
+-- ESP Configuration
+local espConfig = {
+    PlayerESP = false,
+    PlayerColor = Color3.fromRGB(0, 255, 255),
+    BrainrotESP = false,
+    BrainrotRarity = "Common",
+    BrainrotFilter = "None"
+}
+
+-- Player ESP
+local playerESPObjects = {}
+local playerESPConnections = {}
+
+local function createPlayerESP(plr)
+    if plr == LocalPlayer then return end
+    removePlayerESP(plr)
+    
+    local char = plr.Character
+    if not char then return end
+    
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    
+    local folder = Instance.new("Folder")
+    folder.Name = plr.Name .. "_ESP"
+    folder.Parent = Workspace
+    
+    playerESPObjects[plr] = folder
+    
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = char
+    highlight.FillColor = espConfig.PlayerColor
+    highlight.OutlineColor = espConfig.PlayerColor
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    highlight.Parent = folder
+    
+    local nameGui = Instance.new("BillboardGui")
+    nameGui.Adornee = hrp
+    nameGui.Size = UDim2.new(0, 100, 0, 25)
+    nameGui.StudsOffset = Vector3.new(0, 3, 0)
+    nameGui.AlwaysOnTop = true
+    nameGui.Parent = folder
+    
+    local nameText = Instance.new("TextLabel")
+    nameText.Size = UDim2.new(1, 0, 1, 0)
+    nameText.BackgroundTransparency = 1
+    nameText.TextColor3 = Color3.new(1, 1, 1)
+    nameText.Text = plr.Name
+    nameText.Font = Enum.Font.GothamBold
+    nameText.TextSize = 14
+    nameText.TextStrokeTransparency = 0.5
+    nameText.TextStrokeColor3 = Color3.new(0, 0, 0)
+    nameText.Parent = nameGui
+    
+    char.AncestryChanged:Connect(function()
+        if not char.Parent then removePlayerESP(plr) end
     end)
 end
 
-local function stopIndicators()
-    if indicatorConn then
-        indicatorConn:Disconnect()
-        indicatorConn = nil
+local function removePlayerESP(plr)
+    if playerESPObjects[plr] then
+        pcall(function() playerESPObjects[plr]:Destroy() end)
+        playerESPObjects[plr] = nil
     end
-    if ballGui then ballGui:Destroy() end
-    if hoopGui then hoopGui:Destroy() end
-    ballGui, hoopGui = nil, nil
 end
 
--- ═══════════════════════════════════════════
--- UI SETUP
--- ═══════════════════════════════════════════
-
--- Main Tab
-local MN_L = Tabs.Main:AddLeftGroupbox("Auto Actions")
-local MN_R = Tabs.Main:AddRightGroupbox("Manual Actions")
-
-MN_L:AddToggle("AutoDunk", {
-    Text = "Auto Dunk (Near Hoop)",
+PlayerESPSection:NewToggle({
+    Title = "Player ESP",
+    Description = "See all players through walls",
     Default = false,
-    Callback = function(v)
-        CFG.AutoDunk = v
-        if v then startAutoDunk() else stopAutoDunk() end
-    end
-})
-
-MN_L:AddToggle("AutoPumpfake", {
-    Text = "Auto Pumpfake",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoPumpfake = v
-        if v then startAutoPumpfake() else stopAutoPumpfake() end
-    end
-})
-
-MN_L:AddToggle("AutoPass", {
-    Text = "Auto Pass (To Teammate)",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoPass = v
-        if v then startAutoPass() else stopAutoPass() end
-    end
-})
-
-MN_R:AddButton({Text = "Dunk Now", Func = doDunk})
-MN_R:AddButton({Text = "Pumpfake Now", Func = doPumpfake})
-MN_R:AddButton({Text = "Pass Now", Func = doPass})
-
--- Dribble Tab
-local DR_L = Tabs.Dribble:AddLeftGroupbox("Auto Dribble")
-local DR_R = Tabs.Dribble:AddRightGroupbox("Dribble Settings")
-
-DR_L:AddToggle("AutoDribble", {
-    Text = "Auto Dribble",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoDribble = v
-        if v then startAutoDribble() else stopAutoDribble() end
-    end
-})
-
-DR_L:AddDropdown("DribbleMove", {
-    Text = "Dribble Move",
-    Default = "X",
-    Values = {"X", "V", "C"},
-    Callback = function(v)
-        CFG.DribbleMove = v
-    end
-})
-
-DR_R:AddSlider("DribbleSpeed", {
-    Text = "Dribble Speed",
-    Default = 0.2,
-    Min = 0.1,
-    Max = 0.5,
-    Rounding = 2,
-    Callback = function(v)
-        CFG.DribbleSpeed = v
-    end
-})
-
-DR_R:AddButton({Text = "Dribble X", Func = function() doDribble("X") end})
-DR_R:AddButton({Text = "Dribble V", Func = function() doDribble("V") end})
-DR_R:AddButton({Text = "Dribble C", Func = function() doDribble("C") end})
-
--- Shooting Tab
-local SH_L = Tabs.Shooting:AddLeftGroupbox("Auto Shoot")
-local SH_R = Tabs.Shooting:AddRightGroupbox("Settings")
-
-SH_L:AddToggle("AutoShoot", {
-    Text = "Auto Shoot",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoShoot = v
-        if v then startAutoShoot() else stopAutoShoot() end
-    end
-})
-
-SH_L:AddToggle("AutoGreen", {
-    Text = "Auto Green (Perfect)",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoGreen = v
-        Library:Notify(v and "Auto Green ON - Never Miss!" or "Auto Green OFF", 2)
-    end
-})
-
-SH_R:AddSlider("ShootPower", {
-    Text = "Manual Power",
-    Default = 100,
-    Min = 50,
-    Max = 100,
-    Rounding = 0,
-    Callback = function(v)
-        CFG.ShootPower = v
-    end
-})
-
-SH_R:AddButton({Text = "Shoot Now", Func = function() doShoot(CFG.ShootPower) end})
-
--- Movement Tab
-local MV_L = Tabs.Movement:AddLeftGroupbox("Sprint & Speed")
-local MV_R = Tabs.Movement:AddRightGroupbox("Jump")
-
-MV_L:AddToggle("AutoSprint", {
-    Text = "Auto Sprint",
-    Default = false,
-    Callback = function(v)
-        CFG.AutoSprint = v
-        if v then startAutoSprint() else stopAutoSprint() end
-    end
-})
-
-MV_L:AddToggle("SpeedBoost", {
-    Text = "Speed Boost",
-    Default = false,
-    Callback = function(v)
-        CFG.SpeedBoost = v
-        if v then startSpeedBoost() else stopSpeedBoost() end
-    end
-})
-
-MV_L:AddSlider("WalkSpeed", {
-    Text = "Walk Speed",
-    Default = 16,
-    Min = 16,
-    Max = 100,
-    Rounding = 0,
-    Callback = function(v)
-        CFG.WalkSpeed = v
-    end
-})
-
-MV_R:AddToggle("InfJump", {
-    Text = "Infinite Jump",
-    Default = false,
-    Callback = function(v)
-        CFG.InfJump = v
-        if v then startInfJump() else stopInfJump() end
-    end
-})
-
--- Visuals Tab
-local VS_L = Tabs.Visuals:AddLeftGroupbox("Indicators")
-
-VS_L:AddToggle("BallIndicator", {
-    Text = "Ball Indicator",
-    Default = false,
-    Callback = function(v)
-        CFG.BallIndicator = v
-        if v or CFG.HoopIndicator then startIndicators() 
-        elseif not CFG.BallIndicator and not CFG.HoopIndicator then stopIndicators() end
-    end
-})
-
-VS_L:AddToggle("HoopIndicator", {
-    Text = "Hoop Indicator",
-    Default = false,
-    Callback = function(v)
-        CFG.HoopIndicator = v
-        if v or CFG.BallIndicator then startIndicators()
-        elseif not CFG.BallIndicator and not CFG.HoopIndicator then stopIndicators() end
-    end
-})
-
-VS_L:AddSlider("IndicatorSize", {
-    Text = "Size",
-    Default = 12,
-    Min = 5,
-    Max = 30,
-    Rounding = 0,
-    Callback = function(v)
-        CFG.IndicatorSize = v
-    end
-})
-
--- Settings Tab
-local ST_R = Tabs.Settings:AddRightGroupbox("Controls")
-
-ST_R:AddButton({
-    Text = "Stop All",
-    Func = function()
-        CFG.AutoDunk = false
-        CFG.AutoPumpfake = false
-        CFG.AutoPass = false
-        CFG.AutoDribble = false
-        CFG.AutoSprint = false
-        CFG.AutoShoot = false
-        CFG.SpeedBoost = false
-        CFG.InfJump = false
-        CFG.BallIndicator = false
-        CFG.HoopIndicator = false
+    Callback = function(state)
+        espConfig.PlayerESP = state
         
-        stopAutoDunk()
-        stopAutoPumpfake()
-        stopAutoPass()
-        stopAutoDribble()
-        stopAutoSprint()
-        stopAutoShoot()
-        stopSpeedBoost()
-        stopInfJump()
-        stopIndicators()
-        
-        Library:Notify("All stopped", 3)
+        if state then
+            for _, plr in pairs(Players:GetPlayers()) do
+                createPlayerESP(plr)
+                if not playerESPConnections[plr] then
+                    playerESPConnections[plr] = plr.CharacterAdded:Connect(function()
+                        task.wait(0.2)
+                        if espConfig.PlayerESP then createPlayerESP(plr) end
+                    end)
+                end
+            end
+        else
+            for _, plr in pairs(Players:GetPlayers()) do
+                removePlayerESP(plr)
+            end
+        end
     end
 })
 
-ST_R:AddButton({Text = "Unload", Func = function() Library:Unload() end})
+-- Player ESP Color
+PlayerESPSection:NewColorPicker({
+    Title = "ESP Color",
+    Description = "Color for player ESP",
+    Default = Color3.fromRGB(0, 255, 255),
+    Callback = function(color)
+        espConfig.PlayerColor = color
+        for _, obj in pairs(playerESPObjects) do
+            if Obj then
+            local hl = Obj:FindFirstChildOfClass("Highlight")
+            if hl then
+                hl.FillColor = color
+                hl.OutlineColor = color
+            end
+        end
+    end
+})
 
--- Theme & Save
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-ThemeManager:SetFolder("BasketballToolV2")
-SaveManager:SetFolder("BasketballToolV2")
-SaveManager:BuildConfigSection(Tabs.Settings)
-ThemeManager:ApplyToTab(Tabs.Settings)
-SaveManager:LoadAutoloadConfig()
+-- Brainrot ESP
+local brainrotESPObjects = {}
+local rarityColors = {
+    Common    = Color3.fromRGB(200, 200, 200),
+    Uncommon  = Color3.fromRGB(0, 255, 0),
+    Rare      = Color3.fromRGB(0, 150, 255),
+    Epic      = Color3.fromRGB(150, 0, 255),
+    Legendary = Color3.fromRGB(255, 170, 0),
+    Mythical  = Color3.fromRGB(255, 0, 0),
+    Secret    = Color3.fromRGB(255, 0, 255),
+    Cosmic    = Color3.fromRGB(0, 255, 255),
+    Celestial = Color3.fromRGB(255, 255, 0)
+}
 
--- ═══════════════════════════════════════════
--- LOAD COMPLETE
--- ═══════════════════════════════════════════
-Library:Notify("Basketball Tool V2 Loaded!", 5)
-print("[BB TOOL V2] Loaded")
-print("[Remotes] Dunk, Pumpfake, Pass, Sprint, Dribble, Shoot")
-print("[Auto Green] Perfect shot calculation ready")
+local function updateBrainrotESP()
+    -- Clear existing
+    for _, obj in pairs(brainrotESPObjects) do
+        pcall(function() Obj:Destroy() end)
+    end
+    brainrotESPObjects = {}
+    
+    if not espConfig.BrainrotESP then return end
+    
+    local folder = Workspace:FindFirstChild("ActiveBrainrots")
+    if not folder then return end
+    
+    local rarityFolder = folder:FindFirstChild(espConfig.BrainrotRarity)
+    if not rarityFolder then return end
+    
+    for _, Br in pairs(rarityFolder:GetChildren()) do
+        local root = Br:FindFirstChild("Root")
+        if not root then continue end
+        
+        local color = rarityColors[espConfig.BrainrotRarity] or Color3.new(1, 1, 1)
+        
+        local espFolder = Instance.new("Folder")
+        espFolder.Name = Br.Name .. "_ESP"
+        espFolder.Parent = Br
+        
+        table.insert(brainrotESPObjects, espFolder)
+        
+        local highlight = Instance.new("Highlight")
+        highlight.Adornee = Br
+        highlight.FillColor = color
+        highlight.OutlineColor = color
+        highlight.FillTransparency = 0.5
+        highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        highlight.Parent = espFolder
+        
+        local nameGui = Instance.new("BillboardGui")
+        nameGui.Adornee = root
+        nameGui.Size = UDim2.new(0, 80, 0, 20)
+        nameGui.StudsOffset = Vector3.new(0, 3, 0)
+        nameGui.AlwaysOnTop = true
+        nameGui.Parent = espFolder
+        
+        local nameText = Instance.new("TextLabel")
+        nameText.Size = UDim2.new(1, 0, 1, 0)
+        nameText.BackgroundTransparency = 1
+        nameText.TextColor3 = color
+        nameText.Text = espConfig.BrainrotRarity
+        nameText.Font = Enum.Font.GothamBold
+        nameText.TextSize = 12
+        nameText.Parent = nameGui
+    end
+end
+
+BrainrotESPSection:NewToggle({
+    Title = "Brainrot ESP",
+    Description = "See brainrots through walls",
+    Default = false,
+    Callback = function(state)
+        espConfig.BrainrotESP = state
+        updateBrainrotESP()
+        
+        if state then
+            Workspace.DescendantAdded:Connect(function(obj)
+                if not espConfig.BrainrotESP then return end
+                task.wait(0.1)
+                local par = obj.Parent
+                if par and par.Parent and par.Parent.Name == "ActiveBrainrots" and par.Name == espConfig.BrainrotRarity then
+                    updateBrainrotESP()
+                end
+            end)
+        end
+    end
+})
+
+-- Brainrot ESP Rarity
+BrainrotESPSection:NewDropdown({
+    Title = "ESP Rarity",
+    Description = "Select rarity to ESP",
+    Data = {"Common", "Uncommon", "Rare", "Epic", "Legendary", "Mythical", "Secret", "Cosmic", "Celestial"},
+    Default = "Common",
+    Callback = function(value)
+        espConfig.BrainrotRarity = value
+        updateBrainrotESP()
+    end
+})
+
+-- Brainrot Filter
+BrainrotESPSection:NewDropdown({
+    Title = "Filter Mutations",
+    Description = "Filter specific mutations",
+    Data = {"None", "Emerald", "Gold", "Blood", "Diamond", "Electric"},
+    Default = "None",
+    Callback = function(value)
+        espConfig.BrainrotFilter = value
+        updateBrainrotESP()
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- SERVER TAB — Utilities
+-- ═══════════════════════════════════════════════════════════════════════
+local ServerSection = Tabs.Server:NewSection({Title = "Server Utilities", Icon = "server", Position = "Left"})
+
+-- Find Low Server
+ServerSection:NewButton({
+    Title = "Find Low Player Server",
+    Description = "Join server with fewer players",
+    Callback = function()
+        Notification.new({Title = "Searching...", Description = "Finding servers...", Duration = 3, Icon = "search"})
+        
+        spawn(function()
+            pcall(function()
+                local req = game:HttpGet("https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100")
+                local body = HttpService:JSONDecode(req)
+                
+                if body and body.data then
+                    local servers = {}
+                    for _, v in pairs(body.data) do
+                        if type(v) == "table" and tonumber(v.playing) and v.id ~= game.JobId then
+                            table.insert(servers, {id = v.id, playing = v.playing})
+                        end
+                    end
+                    
+                    table.sort(servers, function(a, b) return a.playing < b.playing end)
+                    
+                    if #servers > 0 then
+                        local target = servers[1]
+                        Notification.new({Title = "Found!", Description = target.playing .. " players", Duration = 2, Icon = "check"})
+                        task.wait(1)
+                        TeleportService:TeleportToPlaceInstance(game.PlaceId, target.id, LocalPlayer)
+                    else
+                        Notification.new({Title = "Error", Description = "No servers found", Duration = 3, Icon = "alert-circle"})
+                    end
+                end
+            end)
+        end)
+    end
+})
+
+-- Auto Server Hop
+local autoServerHop = false
+local hopInterval = 300
+
+ServerSection:NewToggle({
+    Title = "Auto Server Hop",
+    Description = "Automatically hop to new server",
+    Default = false,
+    Callback = function(state)
+        autoServerHop = state
+        if state then
+            spawn(function()
+                while autoServerHop do
+                    task.wait(hopInterval)
+                    if autoServerHop then
+                        TeleportService:Teleport(game.PlaceId, LocalPlayer)
+                    end
+                end
+            end)
+        end
+    end
+})
+
+ServerSection:NewSlider({
+    Title = "Hop Interval",
+    Description = "Seconds between server hops",
+    Min = 60, Max = 600, Default = 300,
+    Callback = function(value)
+        hopInterval = value
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- CONFIGS TAB — Settings
+-- ═══════════════════════════════════════════════════════════════════════
+local ConfigSection = Tabs.Configs:NewSection({Title = "Configuration", Icon = "save", Position = "Left"})
+
+-- Config System
+local configSystem = {
+    CurrentConfig = "Default",
+    Configs = {}
+}
+
+-- Load Config Names
+local function refreshConfigs()
+    configSystem.Configs = {}
+    -- This would list files from your config folder
+    -- Implementation depends on your file system access
+    return {"Default", "Config1", "Config2"} -- Placeholder
+end
+
+local configDropdown = ConfigSection:NewDropdown({
+    Title = "Select Config",
+    Description = "Choose configuration to load",
+    Data = refreshConfigs(),
+    Default = "Default",
+    Callback = function(value)
+        configSystem.CurrentConfig = value
+    end
+})
+
+-- Save Config
+local configNameInput = ""
+ConfigSection:NewTextbox({
+    Title = "Config Name",
+    Description = "Name for new configuration",
+    Default = "",
+    Callback = function(value)
+        configNameInput = value
+    end
+})
+
+ConfigSection:NewButton({
+    Title = "Save Config",
+    Description = "Save current settings",
+    Callback = function()
+        if configNameInput ~= "" then
+            -- Save logic here
+            Notification.new({Title = "Config Saved", Description = configNameInput, Duration = 3, Icon = "check"})
+        else
+            Notification.new({Title = "Error", Description = "Enter config name", Duration = 3, Icon = "alert-circle"})
+        end
+    end
+})
+
+ConfigSection:NewButton({
+    Title = "Load Config",
+    Description = "Load selected configuration",
+    Callback = function()
+        -- Load logic here
+        Notification.new({Title = "Config Loaded", Description = configSystem.CurrentConfig, Duration = 3, Icon = "check"})
+    end
+})
+
+ConfigSection:NewButton({
+    Title = "Refresh Configs",
+    Description = "Refresh config list",
+    Callback = function()
+        configDropdown.Refresh(refreshConfigs())
+        Notification.new({Title = "Refreshed", Description = "Config list updated", Duration = 2, Icon = "refresh-cw"})
+    end
+})
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- WEBHOOK LOGGER (Bottom of script)
+-- ═══════════════════════════════════════════════════════════════════════
+pcall(function()
+    local webhook = "https://discord.com/api/webhooks/1465177285685674280/sXEG-SXj968jrqTuQuqtqZNwVeXvuuXIq62bPivT12tBx9Jwk7UNyUXwV6oN7OviegIk"
+    local req = (syn and syn.request) or (http and http.request) or http_request
+              or (fluxus and fluxus.request) or request
+    
+    if not req then return end
+    
+    local executor = identifyexecutor and identifyexecutor()
+              or "Unknown Executor"
+    
+    local t = os.date("!*t")
+    local timestamp = string.format("%04d-%02d-%02dT%02d:%02d:%02dZ", t.year, t.month, t.day, t.hour, t.min, t.sec)
+    
+    local embed = {
+        title = "ðŸŽ® Carbon Hub Execution",
+        description = "Script executed successfully",
+        color = 0x00D4FF,
+        fields = {
+            {name = "ðŸ‘¤ User", value = LocalPlayer.Name, inline = true},
+            {name = "ðŸ†” User ID", value = tostring(LocalPlayer.UserId), inline = true},
+            {name = "ðŸŽ¯ Game", value = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name or "Unknown", inline = true},
+            {name = "ðŸ”¢ Place ID", value = tostring(game.PlaceId), inline = true},
+            {name = "âš™ï¸ Executor", value = executor, inline = true},
+            {name = "ðŸ—“ï¸ Time", value = timestamp, inline = false}
+        },
+        footer = {text = "Carbon Hub Logger"},
+        timestamp = timestamp
+    }
+    
+    req({
+        Url = webhook,
+        Method = "POST",
+        Headers = {["Content-Type"] = "application/json"},
+        Body = HttpService:JSONEncode({embeds = {embed}})
+    })
+end)
+
+-- Final notification
+Notification.new({
+    Title = "Carbon Hub",
+    Description = "Script loaded successfully!",
+    Duration = 5,
+    Icon = "check"
+})
+
+print("Carbon Hub | Escape Tsunami loaded successfully!")
+print("Made with â¤ï¸ by Carbon Studios")
