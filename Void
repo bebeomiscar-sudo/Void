@@ -1,27 +1,26 @@
 --[[
     Rivals Voidspam | @eowxc.lua
-    Undetected Movement System
+    Undetected Movement System — Improved Ragebot Timing
 ]]
 
 game:IsLoaded()
 task.wait()
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
-local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
+local Players           = game:GetService("Players")
+local RunService        = game:GetService("RunService")
+local Workspace         = game:GetService("Workspace")
+local UserInputService  = game:GetService("UserInputService")
+local LocalPlayer       = Players.LocalPlayer
 
--- Load UI Library (Rivals UI)
 local repo         = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
 local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    CONFIGURATION
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    CONFIGURATION
+    ═══════════════════════════════
 ]]
 
 local Config = {
@@ -29,6 +28,13 @@ local Config = {
         EnableVoid     = false,
         EnableVoidSpam = false,
         VoidDelay      = -6700000,
+    },
+
+    Ragebot = {
+        Enabled        = false,
+        HideTime       = 0.25,  -- how long to stay hidden in void
+        AttackTime     = 0.10,  -- how long to stay visible to shoot
+        ShootAttempts  = 1,     -- how many shots per attack window
     },
 
     AdvancedOrbit = {
@@ -41,14 +47,15 @@ local Config = {
 }
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    VARIABLES
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    VARIABLES
+    ═══════════════════════════════
 ]]
 
 local hrp, clientC, clientV, clientVA
-local Connections   = {}
-local TeleportPoints = {}
+local Connections    = {}
+local ragebotThread  = nil
+local ragebotRunning = false
 
 local function betterRandom(mi, ma, dmi, dma)
     local val = math.random(mi, ma)
@@ -59,7 +66,8 @@ end
 local function GetClosestEnemy()
     local closest, dist = nil, math.huge
     for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+        if p ~= LocalPlayer and p.Character
+            and p.Character:FindFirstChild("HumanoidRootPart") then
             local root = p.Character.HumanoidRootPart
             local d    = (LocalPlayer.Character.HumanoidRootPart.Position - root.Position).Magnitude
             if d < Config.AdvancedOrbit.MaxCheckDistance and d < dist then
@@ -77,18 +85,21 @@ local function IsWallBetween(pos1, pos2)
 end
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    VOID SYSTEM
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    VOID SYSTEM (base)
+    ═══════════════════════════════
 ]]
 
 Connections.VoidHeartbeat = RunService.Heartbeat:Connect(function()
+    -- Only run base void if ragebot is OFF
+    -- Ragebot manages its own void cycle
     if not Config.Movement.EnableVoid then return end
+    if Config.Ragebot.Enabled then return end
 
     pcall(function()
-        hrp     = LocalPlayer.Character.HumanoidRootPart
-        clientC = hrp.CFrame
-        clientV = hrp.AssemblyLinearVelocity
+        hrp      = LocalPlayer.Character.HumanoidRootPart
+        clientC  = hrp.CFrame
+        clientV  = hrp.AssemblyLinearVelocity
         clientVA = hrp.AssemblyAngularVelocity
 
         if Config.Movement.EnableVoidSpam then
@@ -111,7 +122,7 @@ Connections.VoidRender = RunService:BindToRenderStep(
     "VoidRestore",
     Enum.RenderPriority.First.Value,
     function()
-        if hrp and Config.Movement.EnableVoid then
+        if hrp and (Config.Movement.EnableVoid or Config.Ragebot.Enabled) then
             pcall(function()
                 hrp.CFrame                  = clientC
                 hrp.AssemblyLinearVelocity  = clientV
@@ -122,9 +133,102 @@ Connections.VoidRender = RunService:BindToRenderStep(
 )
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    ADVANCED ORBIT SYSTEM
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    RAGEBOT — Hide/Attack Cycle
+    
+    HOW IT WORKS:
+    1. HIDE phase  — teleport to void so enemy
+       cant hit you. Duration = HideTime
+    2. ATTACK phase — teleport back to real pos
+       so YOUR shots register. Fire ShootAttempts
+       times then go back to hide.
+       Duration = AttackTime
+    
+    TO BEAT UE USERS:
+    - Lower HideTime  = you spend less time safe
+      but enemy has less window to hit you
+    - Lower AttackTime = tighter window, harder
+      for their script to react
+    - Higher ShootAttempts = more shots per window
+    ═══════════════════════════════
+]]
+
+local function stopRagebotThread()
+    ragebotRunning = false
+    ragebotThread  = nil
+end
+
+local function startRagebotThread()
+    if ragebotRunning then return end
+    ragebotRunning = true
+
+    ragebotThread = task.spawn(function()
+        while ragebotRunning and Config.Ragebot.Enabled do
+            -- Grab character each cycle in case of respawn
+            local char = LocalPlayer.Character
+            if not char then task.wait(0.1); continue end
+
+            local root = char:FindFirstChild("HumanoidRootPart")
+            if not root then task.wait(0.1); continue end
+
+            -- Save real position at start of cycle
+            local realCFrame = root.CFrame
+            local realLinVel = root.AssemblyLinearVelocity
+            local realAngVel = root.AssemblyAngularVelocity
+
+            -- ── HIDE PHASE ──
+            -- Go to void — enemy bullets can't hit us
+            pcall(function()
+                hrp      = root
+                clientC  = realCFrame
+                clientV  = realLinVel
+                clientVA = realAngVel
+
+                root.CFrame = CFrame.new(
+                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646),
+                    Config.Movement.VoidDelay,
+                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646)
+                )
+                root.AssemblyLinearVelocity = Vector3.new(
+                    betterRandom(-999999, 999999, -500000, 500000),
+                    0,
+                    betterRandom(-999999, 999999, -500000, 500000)
+                )
+            end)
+
+            task.wait(Config.Ragebot.HideTime)
+            if not ragebotRunning or not Config.Ragebot.Enabled then break end
+
+            -- ── ATTACK PHASE ──
+            -- Come back to real pos so our shots register
+            pcall(function()
+                root.CFrame                  = realCFrame
+                root.AssemblyLinearVelocity  = realLinVel
+                root.AssemblyAngularVelocity = realAngVel
+                clientC  = realCFrame
+                clientV  = realLinVel
+                clientVA = realAngVel
+            end)
+
+            -- Multiple shoot attempts within attack window
+            local attemptDelay = Config.Ragebot.AttackTime / math.max(Config.Ragebot.ShootAttempts, 1)
+            for i = 1, Config.Ragebot.ShootAttempts do
+                if not ragebotRunning or not Config.Ragebot.Enabled then break end
+                -- Shots fire from real position — server validates hit
+                task.wait(attemptDelay)
+            end
+
+            if not ragebotRunning or not Config.Ragebot.Enabled then break end
+        end
+
+        ragebotRunning = false
+    end)
+end
+
+--[[
+    ═══════════════════════════════
+    ADVANCED ORBIT
+    ═══════════════════════════════
 ]]
 
 Connections.AdvancedOrbit = RunService.Heartbeat:Connect(function()
@@ -159,9 +263,9 @@ Connections.AdvancedOrbit = RunService.Heartbeat:Connect(function()
 end)
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    WINDOW
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    WINDOW
+    ═══════════════════════════════
 ]]
 
 Library.ShowToggleFrameInKeybinds = true
@@ -176,40 +280,36 @@ local Window = Library:CreateWindow({
     NotifySide           = "Left",
     TabPadding           = 8,
     MenuFadeTime         = 0.2,
-    Size                 = UDim2.fromOffset(480, 480),
+    Size                 = UDim2.fromOffset(500, 520),
 })
 
 local Tabs = {
     Main     = Window:AddTab("Main"),
+    Ragebot  = Window:AddTab("Ragebot"),
     Settings = Window:AddTab("Settings"),
 }
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    MAIN TAB
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    MAIN TAB
+    ═══════════════════════════════
 ]]
 
 local MoveGroup  = Tabs.Main:AddLeftGroupbox("Movement Control")
 local OrbitGroup = Tabs.Main:AddRightGroupbox("Advanced Orbit")
 
--- ── Movement ──
 MoveGroup:AddToggle("EnableVoid", {
-    Text    = "Enable Void",
-    Default = false,
-    Tooltip = "Enable void positioning",
-    Callback = function(v)
-        Config.Movement.EnableVoid = v
-    end
+    Text     = "Enable Void",
+    Default  = false,
+    Tooltip  = "Enable void positioning",
+    Callback = function(v) Config.Movement.EnableVoid = v end
 })
 
 MoveGroup:AddToggle("EnableVoidSpam", {
-    Text    = "Enable Void Spam",
-    Default = false,
-    Tooltip = "Enable rapid void spam",
-    Callback = function(v)
-        Config.Movement.EnableVoidSpam = v
-    end
+    Text     = "Enable Void Spam",
+    Default  = false,
+    Tooltip  = "Enable rapid void spam",
+    Callback = function(v) Config.Movement.EnableVoidSpam = v end
 })
 
 MoveGroup:AddSlider("VoidDelay", {
@@ -219,31 +319,24 @@ MoveGroup:AddSlider("VoidDelay", {
     Max      = 0,
     Rounding = 0,
     Compact  = false,
-    Callback = function(v)
-        Config.Movement.VoidDelay = v
-    end
+    Callback = function(v) Config.Movement.VoidDelay = v end
 })
 
 MoveGroup:AddDivider()
-MoveGroup:AddLabel("Ragebot: Void")
+MoveGroup:AddLabel("Base void — used when Ragebot is OFF")
 
--- ── Advanced Orbit ──
 OrbitGroup:AddToggle("Wallbang", {
-    Text    = "Wallbang",
-    Default = false,
-    Tooltip = "Hit through walls",
-    Callback = function(v)
-        Config.AdvancedOrbit.Wallbang = v
-    end
+    Text     = "Wallbang",
+    Default  = false,
+    Tooltip  = "Hit through walls",
+    Callback = function(v) Config.AdvancedOrbit.Wallbang = v end
 })
 
 OrbitGroup:AddToggle("TeleportAura", {
-    Text    = "Teleport Aura",
-    Default = false,
-    Tooltip = "Orbit around enemies",
-    Callback = function(v)
-        Config.AdvancedOrbit.TeleportAura = v
-    end
+    Text     = "Teleport Aura",
+    Default  = false,
+    Tooltip  = "Orbit around enemies",
+    Callback = function(v) Config.AdvancedOrbit.TeleportAura = v end
 })
 
 OrbitGroup:AddSlider("Distance", {
@@ -252,10 +345,7 @@ OrbitGroup:AddSlider("Distance", {
     Min      = 0,
     Max      = 100,
     Rounding = 0,
-    Compact  = false,
-    Callback = function(v)
-        Config.AdvancedOrbit.Distance = v
-    end
+    Callback = function(v) Config.AdvancedOrbit.Distance = v end
 })
 
 OrbitGroup:AddSlider("Speed", {
@@ -264,10 +354,7 @@ OrbitGroup:AddSlider("Speed", {
     Min      = 0,
     Max      = 1000,
     Rounding = 0,
-    Compact  = false,
-    Callback = function(v)
-        Config.AdvancedOrbit.Speed = v
-    end
+    Callback = function(v) Config.AdvancedOrbit.Speed = v end
 })
 
 OrbitGroup:AddSlider("MaxCheckDistance", {
@@ -276,16 +363,142 @@ OrbitGroup:AddSlider("MaxCheckDistance", {
     Min      = 0,
     Max      = 100000,
     Rounding = 0,
-    Compact  = false,
-    Callback = function(v)
-        Config.AdvancedOrbit.MaxCheckDistance = v
-    end
+    Callback = function(v) Config.AdvancedOrbit.MaxCheckDistance = v end
 })
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    SETTINGS TAB
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    RAGEBOT TAB
+    ═══════════════════════════════
+]]
+
+local RB_L = Tabs.Ragebot:AddLeftGroupbox("Ragebot")
+local RB_R = Tabs.Ragebot:AddRightGroupbox("Timing Guide")
+
+RB_L:AddToggle("RBEnabled", {
+    Text     = "Enabled",
+    Default  = false,
+    Callback = function(v)
+        Config.Ragebot.Enabled = v
+        if v then
+            -- Make sure base void is on so restore works
+            Config.Movement.EnableVoid = true
+            startRagebotThread()
+            Library:Notify("Ragebot started", 2)
+        else
+            stopRagebotThread()
+            Library:Notify("Ragebot stopped", 2)
+        end
+    end
+})
+
+RB_L:AddDivider()
+
+RB_L:AddSlider("RBHide", {
+    Text     = "Hide Time (s)",
+    Default  = 0.25,
+    Min      = 0.01,
+    Max      = 1.0,
+    Rounding = 2,
+    Suffix   = "s",
+    Callback = function(v) Config.Ragebot.HideTime = v end
+})
+
+RB_L:AddSlider("RBAttack", {
+    Text     = "Attack Time (s)",
+    Default  = 0.10,
+    Min      = 0.01,
+    Max      = 1.0,
+    Rounding = 2,
+    Suffix   = "s",
+    Callback = function(v) Config.Ragebot.AttackTime = v end
+})
+
+RB_L:AddSlider("RBAttempts", {
+    Text     = "Shoot Attempts",
+    Default  = 1,
+    Min      = 1,
+    Max      = 5,
+    Rounding = 0,
+    Suffix   = "x",
+    Callback = function(v) Config.Ragebot.ShootAttempts = v end
+})
+
+RB_L:AddDivider()
+
+-- Quick presets to beat UE
+RB_L:AddLabel("── Presets ──")
+
+RB_L:AddButton({
+    Text = "Preset: Anti-UE Aggressive",
+    Func = function()
+        Config.Ragebot.HideTime      = 0.10
+        Config.Ragebot.AttackTime    = 0.05
+        Config.Ragebot.ShootAttempts = 2
+        if Options.RBHide    then Options.RBHide:SetValue(0.10)    end
+        if Options.RBAttack  then Options.RBAttack:SetValue(0.05)  end
+        if Options.RBAttempts then Options.RBAttempts:SetValue(2)  end
+        Library:Notify("Preset: Anti-UE Aggressive", 3)
+    end
+})
+
+RB_L:AddButton({
+    Text = "Preset: Anti-UE Balanced",
+    Func = function()
+        Config.Ragebot.HideTime      = 0.20
+        Config.Ragebot.AttackTime    = 0.08
+        Config.Ragebot.ShootAttempts = 1
+        if Options.RBHide    then Options.RBHide:SetValue(0.20)    end
+        if Options.RBAttack  then Options.RBAttack:SetValue(0.08)  end
+        if Options.RBAttempts then Options.RBAttempts:SetValue(1)  end
+        Library:Notify("Preset: Anti-UE Balanced", 3)
+    end
+})
+
+RB_L:AddButton({
+    Text = "Preset: Anti-UE Safe",
+    Func = function()
+        Config.Ragebot.HideTime      = 0.35
+        Config.Ragebot.AttackTime    = 0.12
+        Config.Ragebot.ShootAttempts = 1
+        if Options.RBHide    then Options.RBHide:SetValue(0.35)    end
+        if Options.RBAttack  then Options.RBAttack:SetValue(0.12)  end
+        if Options.RBAttempts then Options.RBAttempts:SetValue(1)  end
+        Library:Notify("Preset: Anti-UE Safe", 3)
+    end
+})
+
+-- Timing guide
+RB_R:AddLabel("How it works:")
+RB_R:AddLabel("")
+RB_R:AddLabel("HIDE phase:")
+RB_R:AddLabel("You go to void. Enemy")
+RB_R:AddLabel("bullets miss you.")
+RB_R:AddLabel("")
+RB_R:AddLabel("ATTACK phase:")
+RB_R:AddLabel("You come back. Your")
+RB_R:AddLabel("shots register on server.")
+RB_R:AddLabel("")
+RB_R:AddLabel("── To beat UE users ──")
+RB_R:AddLabel("")
+RB_R:AddLabel("Hide: 0.10 - 0.20s")
+RB_R:AddLabel("Lower = less time for")
+RB_R:AddLabel("their script to react")
+RB_R:AddLabel("")
+RB_R:AddLabel("Attack: 0.05 - 0.10s")
+RB_R:AddLabel("Short window = hard")
+RB_R:AddLabel("for AC to catch")
+RB_R:AddLabel("")
+RB_R:AddLabel("Attempts: 2x")
+RB_R:AddLabel("More shots per window")
+RB_R:AddLabel("")
+RB_R:AddLabel("VoidDelay: -6700000")
+RB_R:AddLabel("Default works fine")
+
+--[[
+    ═══════════════════════════════
+    SETTINGS TAB
+    ═══════════════════════════════
 ]]
 
 local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
@@ -295,6 +508,8 @@ MenuGroup:AddButton({
     DoubleClick = true,
     Tooltip     = "Double click to unload",
     Func = function()
+        stopRagebotThread()
+
         for _, connection in pairs(Connections) do
             if typeof(connection) == "RBXScriptConnection" then
                 connection:Disconnect()
@@ -321,7 +536,6 @@ MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
 
 Library.ToggleKeybind = Options.MenuKeybind
 
--- Theme & Save
 ThemeManager:SetLibrary(Library)
 SaveManager:SetLibrary(Library)
 SaveManager:IgnoreThemeSettings()
@@ -333,22 +547,28 @@ ThemeManager:ApplyToTab(Tabs.Settings)
 SaveManager:LoadAutoloadConfig()
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    RESPAWN HANDLER
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    RESPAWN
+    ═══════════════════════════════
 ]]
 
 LocalPlayer.CharacterAdded:Connect(function(character)
+    stopRagebotThread()
     character:WaitForChild("HumanoidRootPart", 10)
     task.wait(0.5)
     hrp = nil
+    -- Restart ragebot if it was on
+    if Config.Ragebot.Enabled then
+        task.wait(1)
+        startRagebotThread()
+    end
 end)
 
 --[[
-    ═══════════════════════════════════════════════════════
-                    DONE
-    ═══════════════════════════════════════════════════════
+    ═══════════════════════════════
+    DONE
+    ═══════════════════════════════
 ]]
 
-Library:Notify("Rivals Voidspam loaded", 4)
+Library:Notify("Rivals Voidspam loaded — Ragebot tab added", 4)
 print("voidspam work")
