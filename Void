@@ -1,574 +1,669 @@
 --[[
-    Rivals Voidspam | @eowxc.lua
-    Undetected Movement System — Improved Ragebot Timing
+    ╔══════════════════════════════════════════════════════════╗
+    ║  RIVALS SEASON 3 | HvH Domination Script                ║
+    ║  Post-Patch Methods | Win Every HvH                     ║
+    ╚══════════════════════════════════════════════════════════╝
 ]]
 
 game:IsLoaded()
 task.wait()
 
-local Players           = game:GetService("Players")
-local RunService        = game:GetService("RunService")
-local Workspace         = game:GetService("Workspace")
-local UserInputService  = game:GetService("UserInputService")
-local LocalPlayer       = Players.LocalPlayer
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
 
-local repo         = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
-
---[[
-    ═══════════════════════════════
-    CONFIGURATION
-    ═══════════════════════════════
-]]
+local Rayfield = loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
 
 local Config = {
+    AntiPatch = {
+        HybridDesync = false,
+        MicroTP = false,
+        PhantomHit = false,
+        FrameSkip = false,
+        PredictiveStrike = false,
+        DualPosition = false,
+    },
+    
+    WinCondition = {
+        AutoSwitch = false,
+        RushDown = false,
+        CornerTrap = false,
+        BaitShot = false,
+        MeleeAbuse = false,
+        StaminaDrain = false,
+    },
+    
+    SilentAim = {
+        Enabled = false,
+        HitChance = 100,
+        Prediction = 0.15,
+    },
+    
     Movement = {
-        EnableVoid     = false,
-        EnableVoidSpam = false,
-        VoidDelay      = -6700000,
+        MicroAdjust = false,
+        StrafeBot = false,
+        AntiPredict = false,
+        JitterMove = false,
     },
-
-    Ragebot = {
-        Enabled        = false,
-        HideTime       = 0.25,  -- how long to stay hidden in void
-        AttackTime     = 0.10,  -- how long to stay visible to shoot
-        ShootAttempts  = 1,     -- how many shots per attack window
-    },
-
-    AdvancedOrbit = {
-        Wallbang         = false,
-        TeleportAura     = false,
-        Distance         = 7,
-        Speed            = 5,
-        MaxCheckDistance = 100000,
-    },
+    
+    Advanced = {
+        InstantRespawn = false,
+        AutoHeal = false,
+        SpamCrouch = false,
+        FakeLag = false,
+    }
 }
 
---[[
-    ═══════════════════════════════
-    VARIABLES
-    ═══════════════════════════════
-]]
-
-local hrp, clientC, clientV, clientVA
-local Connections    = {}
-local ragebotThread  = nil
-local ragebotRunning = false
-
-local function betterRandom(mi, ma, dmi, dma)
-    local val = math.random(mi, ma)
-    repeat val = math.random(mi, ma) until val < dmi or val > dma
-    return val
-end
+local Connections = {}
+local LastShotTime = 0
+local WeaponCooldowns = {
+    Rifle = 0.5,
+    Pistol = 0.3,
+    Fists = 0.2,
+    Grenade = 1.5,
+}
 
 local function GetClosestEnemy()
     local closest, dist = nil, math.huge
     for _, p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character
-            and p.Character:FindFirstChild("HumanoidRootPart") then
-            local root = p.Character.HumanoidRootPart
-            local d    = (LocalPlayer.Character.HumanoidRootPart.Position - root.Position).Magnitude
-            if d < Config.AdvancedOrbit.MaxCheckDistance and d < dist then
-                closest, dist = p, d
+        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+            local hrp = p.Character.HumanoidRootPart
+            local humanoid = p.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
+                local d = (LocalPlayer.Character.HumanoidRootPart.Position - hrp.Position).Magnitude
+                if d < dist then
+                    closest, dist = p, d
+                end
             end
         end
     end
     return closest, dist
 end
 
-local function IsWallBetween(pos1, pos2)
-    local ray = Ray.new(pos1, (pos2 - pos1).Unit * (pos2 - pos1).Magnitude)
-    local hit  = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character})
-    return hit ~= nil
+local function GetBestWeapon()
+    local weapons = {"Rifle", "Pistol", "Fists"}
+    for _, weaponName in pairs(weapons) do
+        local tool = LocalPlayer.Character:FindFirstChild(weaponName)
+        if tool then return tool end
+    end
+    return nil
 end
 
---[[
-    ═══════════════════════════════
-    VOID SYSTEM (base)
-    ═══════════════════════════════
-]]
+local function PredictPosition(enemy, timeAhead)
+    if not enemy or not enemy.Character then return nil end
+    local hrp = enemy.Character.HumanoidRootPart
+    local velocity = hrp.AssemblyLinearVelocity
+    return hrp.Position + (velocity * timeAhead)
+end
 
-Connections.VoidHeartbeat = RunService.Heartbeat:Connect(function()
-    -- Only run base void if ragebot is OFF
-    -- Ragebot manages its own void cycle
-    if not Config.Movement.EnableVoid then return end
-    if Config.Ragebot.Enabled then return end
+local function IsInFrontOfEnemy(enemy)
+    if not enemy or not enemy.Character then return false end
+    local enemyHRP = enemy.Character.HumanoidRootPart
+    local myHRP = LocalPlayer.Character.HumanoidRootPart
+    local direction = (myHRP.Position - enemyHRP.Position).Unit
+    local facing = enemyHRP.CFrame.LookVector
+    return direction:Dot(facing) > 0.5
+end
 
+Connections.HybridDesync = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.HybridDesync then return end
+    
     pcall(function()
-        hrp      = LocalPlayer.Character.HumanoidRootPart
-        clientC  = hrp.CFrame
-        clientV  = hrp.AssemblyLinearVelocity
-        clientVA = hrp.AssemblyAngularVelocity
-
-        if Config.Movement.EnableVoidSpam then
-            local delay = Config.Movement.VoidDelay
-            hrp.CFrame = CFrame.new(
-                betterRandom(-2147483646, 2147483646, -1147483646, 1147483646),
-                delay,
-                betterRandom(-2147483646, 2147483646, -1147483646, 1147483646)
-            )
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        local enemy = GetClosestEnemy()
+        
+        if enemy then
+            local time = tick()
+            local phase = math.floor(time * 20) % 3
+            
+            if phase == 0 then
+                hrp.CFrame = hrp.CFrame * CFrame.new(0.5, 0, 0)
+            elseif phase == 1 then
+                hrp.CFrame = hrp.CFrame * CFrame.new(-0.5, 0, 0)
+            else
+                hrp.CFrame = hrp.CFrame * CFrame.new(0, 0, 0.3)
+            end
+            
             hrp.AssemblyLinearVelocity = Vector3.new(
-                betterRandom(-999999, 999999, -500000, 500000),
-                0,
-                betterRandom(-999999, 999999, -500000, 500000)
+                math.random(-10, 10),
+                hrp.AssemblyLinearVelocity.Y,
+                math.random(-10, 10)
             )
         end
     end)
 end)
 
-Connections.VoidRender = RunService:BindToRenderStep(
-    "VoidRestore",
-    Enum.RenderPriority.First.Value,
-    function()
-        if hrp and (Config.Movement.EnableVoid or Config.Ragebot.Enabled) then
-            pcall(function()
-                hrp.CFrame                  = clientC
-                hrp.AssemblyLinearVelocity  = clientV
-                hrp.AssemblyAngularVelocity = clientVA
-            end)
-        end
-    end
-)
-
---[[
-    ═══════════════════════════════
-    RAGEBOT — Hide/Attack Cycle
+Connections.MicroTP = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.MicroTP then return end
     
-    HOW IT WORKS:
-    1. HIDE phase  — teleport to void so enemy
-       cant hit you. Duration = HideTime
-    2. ATTACK phase — teleport back to real pos
-       so YOUR shots register. Fire ShootAttempts
-       times then go back to hide.
-       Duration = AttackTime
-    
-    TO BEAT UE USERS:
-    - Lower HideTime  = you spend less time safe
-      but enemy has less window to hit you
-    - Lower AttackTime = tighter window, harder
-      for their script to react
-    - Higher ShootAttempts = more shots per window
-    ═══════════════════════════════
-]]
-
-local function stopRagebotThread()
-    ragebotRunning = false
-    ragebotThread  = nil
-end
-
-local function startRagebotThread()
-    if ragebotRunning then return end
-    ragebotRunning = true
-
-    ragebotThread = task.spawn(function()
-        while ragebotRunning and Config.Ragebot.Enabled do
-            -- Grab character each cycle in case of respawn
-            local char = LocalPlayer.Character
-            if not char then task.wait(0.1); continue end
-
-            local root = char:FindFirstChild("HumanoidRootPart")
-            if not root then task.wait(0.1); continue end
-
-            -- Save real position at start of cycle
-            local realCFrame = root.CFrame
-            local realLinVel = root.AssemblyLinearVelocity
-            local realAngVel = root.AssemblyAngularVelocity
-
-            -- ── HIDE PHASE ──
-            -- Go to void — enemy bullets can't hit us
-            pcall(function()
-                hrp      = root
-                clientC  = realCFrame
-                clientV  = realLinVel
-                clientVA = realAngVel
-
-                root.CFrame = CFrame.new(
-                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646),
-                    Config.Movement.VoidDelay,
-                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646)
-                )
-                root.AssemblyLinearVelocity = Vector3.new(
-                    betterRandom(-999999, 999999, -500000, 500000),
-                    0,
-                    betterRandom(-999999, 999999, -500000, 500000)
-                )
-            end)
-
-            task.wait(Config.Ragebot.HideTime)
-            if not ragebotRunning or not Config.Ragebot.Enabled then break end
-
-            -- ── ATTACK PHASE ──
-            -- Come back to real pos so our shots register
-            pcall(function()
-                root.CFrame                  = realCFrame
-                root.AssemblyLinearVelocity  = realLinVel
-                root.AssemblyAngularVelocity = realAngVel
-                clientC  = realCFrame
-                clientV  = realLinVel
-                clientVA = realAngVel
-            end)
-
-            -- Multiple shoot attempts within attack window
-            local attemptDelay = Config.Ragebot.AttackTime / math.max(Config.Ragebot.ShootAttempts, 1)
-            for i = 1, Config.Ragebot.ShootAttempts do
-                if not ragebotRunning or not Config.Ragebot.Enabled then break end
-                -- Shots fire from real position — server validates hit
-                task.wait(attemptDelay)
-            end
-
-            if not ragebotRunning or not Config.Ragebot.Enabled then break end
-        end
-
-        ragebotRunning = false
-    end)
-end
-
---[[
-    ═══════════════════════════════
-    ADVANCED ORBIT
-    ═══════════════════════════════
-]]
-
-Connections.AdvancedOrbit = RunService.Heartbeat:Connect(function()
-    if not (Config.AdvancedOrbit.Wallbang or Config.AdvancedOrbit.TeleportAura) then return end
-
     pcall(function()
         local enemy, distance = GetClosestEnemy()
-        if not enemy then return end
+        if enemy and distance < 30 then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local enemyHRP = enemy.Character.HumanoidRootPart
+            
+            local optimalPos = enemyHRP.Position + (enemyHRP.CFrame.LookVector * -3)
+            hrp.CFrame = CFrame.new(
+                hrp.Position:Lerp(optimalPos, 0.3),
+                enemyHRP.Position
+            )
+        end
+    end)
+end)
 
-        local enemyRoot  = enemy.Character.HumanoidRootPart
-        local playerRoot = LocalPlayer.Character.HumanoidRootPart
-
-        if distance <= Config.AdvancedOrbit.Distance then
-            if Config.AdvancedOrbit.Wallbang then
-                if not IsWallBetween(playerRoot.Position, enemyRoot.Position) then
-                    return
+Connections.PhantomHit = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.PhantomHit then return end
+    
+    pcall(function()
+        local enemy = GetClosestEnemy()
+        if enemy then
+            local predictedPos = PredictPosition(enemy, 0.15)
+            if predictedPos then
+                local hrp = LocalPlayer.Character.HumanoidRootPart
+                local tool = GetBestWeapon()
+                
+                if tool and tick() - LastShotTime > (WeaponCooldowns[tool.Name] or 0.5) then
+                    local tempCFrame = hrp.CFrame
+                    hrp.CFrame = CFrame.new(hrp.Position, predictedPos)
+                    tool:Activate()
+                    task.wait(0.02)
+                    hrp.CFrame = tempCFrame
+                    LastShotTime = tick()
                 end
-            end
-
-            if Config.AdvancedOrbit.TeleportAura then
-                local t      = tick() * Config.AdvancedOrbit.Speed
-                local radius = Config.AdvancedOrbit.Distance
-                local offset = Vector3.new(
-                    math.sin(t) * radius,
-                    0,
-                    math.cos(t) * radius
-                )
-                enemyRoot.CFrame = CFrame.new(playerRoot.Position + offset)
             end
         end
     end)
 end)
 
---[[
-    ═══════════════════════════════
-    WINDOW
-    ═══════════════════════════════
-]]
-
-Library.ShowToggleFrameInKeybinds = true
-
-local Window = Library:CreateWindow({
-    Title                = "Rivals Voidspam | @eowxc.lua",
-    Center               = true,
-    AutoShow             = true,
-    Resizable            = true,
-    ShowCustomCursor     = false,
-    UnlockMouseWhileOpen = true,
-    NotifySide           = "Left",
-    TabPadding           = 8,
-    MenuFadeTime         = 0.2,
-    Size                 = UDim2.fromOffset(500, 520),
-})
-
-local Tabs = {
-    Main     = Window:AddTab("Main"),
-    Ragebot  = Window:AddTab("Ragebot"),
-    Settings = Window:AddTab("Settings"),
-}
-
---[[
-    ═══════════════════════════════
-    MAIN TAB
-    ═══════════════════════════════
-]]
-
-local MoveGroup  = Tabs.Main:AddLeftGroupbox("Movement Control")
-local OrbitGroup = Tabs.Main:AddRightGroupbox("Advanced Orbit")
-
-MoveGroup:AddToggle("EnableVoid", {
-    Text     = "Enable Void",
-    Default  = false,
-    Tooltip  = "Enable void positioning",
-    Callback = function(v) Config.Movement.EnableVoid = v end
-})
-
-MoveGroup:AddToggle("EnableVoidSpam", {
-    Text     = "Enable Void Spam",
-    Default  = false,
-    Tooltip  = "Enable rapid void spam",
-    Callback = function(v) Config.Movement.EnableVoidSpam = v end
-})
-
-MoveGroup:AddSlider("VoidDelay", {
-    Text     = "Void Delay / Drop",
-    Default  = -6700000,
-    Min      = -10000000,
-    Max      = 0,
-    Rounding = 0,
-    Compact  = false,
-    Callback = function(v) Config.Movement.VoidDelay = v end
-})
-
-MoveGroup:AddDivider()
-MoveGroup:AddLabel("Base void — used when Ragebot is OFF")
-
-OrbitGroup:AddToggle("Wallbang", {
-    Text     = "Wallbang",
-    Default  = false,
-    Tooltip  = "Hit through walls",
-    Callback = function(v) Config.AdvancedOrbit.Wallbang = v end
-})
-
-OrbitGroup:AddToggle("TeleportAura", {
-    Text     = "Teleport Aura",
-    Default  = false,
-    Tooltip  = "Orbit around enemies",
-    Callback = function(v) Config.AdvancedOrbit.TeleportAura = v end
-})
-
-OrbitGroup:AddSlider("Distance", {
-    Text     = "Distance",
-    Default  = 7,
-    Min      = 0,
-    Max      = 100,
-    Rounding = 0,
-    Callback = function(v) Config.AdvancedOrbit.Distance = v end
-})
-
-OrbitGroup:AddSlider("Speed", {
-    Text     = "Speed",
-    Default  = 5,
-    Min      = 0,
-    Max      = 1000,
-    Rounding = 0,
-    Callback = function(v) Config.AdvancedOrbit.Speed = v end
-})
-
-OrbitGroup:AddSlider("MaxCheckDistance", {
-    Text     = "Max Check Distance",
-    Default  = 100000,
-    Min      = 0,
-    Max      = 100000,
-    Rounding = 0,
-    Callback = function(v) Config.AdvancedOrbit.MaxCheckDistance = v end
-})
-
---[[
-    ═══════════════════════════════
-    RAGEBOT TAB
-    ═══════════════════════════════
-]]
-
-local RB_L = Tabs.Ragebot:AddLeftGroupbox("Ragebot")
-local RB_R = Tabs.Ragebot:AddRightGroupbox("Timing Guide")
-
-RB_L:AddToggle("RBEnabled", {
-    Text     = "Enabled",
-    Default  = false,
-    Callback = function(v)
-        Config.Ragebot.Enabled = v
-        if v then
-            -- Make sure base void is on so restore works
-            Config.Movement.EnableVoid = true
-            startRagebotThread()
-            Library:Notify("Ragebot started", 2)
-        else
-            stopRagebotThread()
-            Library:Notify("Ragebot stopped", 2)
+Connections.FrameSkip = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.FrameSkip then return end
+    
+    pcall(function()
+        local frame = math.floor(tick() * 60) % 5
+        if frame == 0 then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            hrp.CFrame = hrp.CFrame * CFrame.new(
+                math.random(-2, 2),
+                0,
+                math.random(-2, 2)
+            )
         end
-    end
-})
-
-RB_L:AddDivider()
-
-RB_L:AddSlider("RBHide", {
-    Text     = "Hide Time (s)",
-    Default  = 0.25,
-    Min      = 0.01,
-    Max      = 1.0,
-    Rounding = 2,
-    Suffix   = "s",
-    Callback = function(v) Config.Ragebot.HideTime = v end
-})
-
-RB_L:AddSlider("RBAttack", {
-    Text     = "Attack Time (s)",
-    Default  = 0.10,
-    Min      = 0.01,
-    Max      = 1.0,
-    Rounding = 2,
-    Suffix   = "s",
-    Callback = function(v) Config.Ragebot.AttackTime = v end
-})
-
-RB_L:AddSlider("RBAttempts", {
-    Text     = "Shoot Attempts",
-    Default  = 1,
-    Min      = 1,
-    Max      = 5,
-    Rounding = 0,
-    Suffix   = "x",
-    Callback = function(v) Config.Ragebot.ShootAttempts = v end
-})
-
-RB_L:AddDivider()
-
--- Quick presets to beat UE
-RB_L:AddLabel("── Presets ──")
-
-RB_L:AddButton({
-    Text = "Preset: Anti-UE Aggressive",
-    Func = function()
-        Config.Ragebot.HideTime      = 0.10
-        Config.Ragebot.AttackTime    = 0.05
-        Config.Ragebot.ShootAttempts = 2
-        if Options.RBHide    then Options.RBHide:SetValue(0.10)    end
-        if Options.RBAttack  then Options.RBAttack:SetValue(0.05)  end
-        if Options.RBAttempts then Options.RBAttempts:SetValue(2)  end
-        Library:Notify("Preset: Anti-UE Aggressive", 3)
-    end
-})
-
-RB_L:AddButton({
-    Text = "Preset: Anti-UE Balanced",
-    Func = function()
-        Config.Ragebot.HideTime      = 0.20
-        Config.Ragebot.AttackTime    = 0.08
-        Config.Ragebot.ShootAttempts = 1
-        if Options.RBHide    then Options.RBHide:SetValue(0.20)    end
-        if Options.RBAttack  then Options.RBAttack:SetValue(0.08)  end
-        if Options.RBAttempts then Options.RBAttempts:SetValue(1)  end
-        Library:Notify("Preset: Anti-UE Balanced", 3)
-    end
-})
-
-RB_L:AddButton({
-    Text = "Preset: Anti-UE Safe",
-    Func = function()
-        Config.Ragebot.HideTime      = 0.35
-        Config.Ragebot.AttackTime    = 0.12
-        Config.Ragebot.ShootAttempts = 1
-        if Options.RBHide    then Options.RBHide:SetValue(0.35)    end
-        if Options.RBAttack  then Options.RBAttack:SetValue(0.12)  end
-        if Options.RBAttempts then Options.RBAttempts:SetValue(1)  end
-        Library:Notify("Preset: Anti-UE Safe", 3)
-    end
-})
-
--- Timing guide
-RB_R:AddLabel("How it works:")
-RB_R:AddLabel("")
-RB_R:AddLabel("HIDE phase:")
-RB_R:AddLabel("You go to void. Enemy")
-RB_R:AddLabel("bullets miss you.")
-RB_R:AddLabel("")
-RB_R:AddLabel("ATTACK phase:")
-RB_R:AddLabel("You come back. Your")
-RB_R:AddLabel("shots register on server.")
-RB_R:AddLabel("")
-RB_R:AddLabel("── To beat UE users ──")
-RB_R:AddLabel("")
-RB_R:AddLabel("Hide: 0.10 - 0.20s")
-RB_R:AddLabel("Lower = less time for")
-RB_R:AddLabel("their script to react")
-RB_R:AddLabel("")
-RB_R:AddLabel("Attack: 0.05 - 0.10s")
-RB_R:AddLabel("Short window = hard")
-RB_R:AddLabel("for AC to catch")
-RB_R:AddLabel("")
-RB_R:AddLabel("Attempts: 2x")
-RB_R:AddLabel("More shots per window")
-RB_R:AddLabel("")
-RB_R:AddLabel("VoidDelay: -6700000")
-RB_R:AddLabel("Default works fine")
-
---[[
-    ═══════════════════════════════
-    SETTINGS TAB
-    ═══════════════════════════════
-]]
-
-local MenuGroup = Tabs.Settings:AddLeftGroupbox("Menu")
-
-MenuGroup:AddButton({
-    Text        = "Unload Script",
-    DoubleClick = true,
-    Tooltip     = "Double click to unload",
-    Func = function()
-        stopRagebotThread()
-
-        for _, connection in pairs(Connections) do
-            if typeof(connection) == "RBXScriptConnection" then
-                connection:Disconnect()
-            end
-        end
-
-        RunService:UnbindFromRenderStep("VoidRestore")
-
-        if hrp and clientC then
-            hrp.CFrame                  = clientC
-            hrp.AssemblyLinearVelocity  = Vector3.new(0, 0, 0)
-            hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-        end
-
-        Library:Unload()
-    end
-})
-
-MenuGroup:AddLabel("Menu bind"):AddKeyPicker("MenuKeybind", {
-    Default = "End",
-    NoUI    = true,
-    Text    = "Menu keybind",
-})
-
-Library.ToggleKeybind = Options.MenuKeybind
-
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-ThemeManager:SetFolder("RivalsVoid")
-SaveManager:SetFolder("RivalsVoid/configs")
-SaveManager:BuildConfigSection(Tabs.Settings)
-ThemeManager:ApplyToTab(Tabs.Settings)
-SaveManager:LoadAutoloadConfig()
-
---[[
-    ═══════════════════════════════
-    RESPAWN
-    ═══════════════════════════════
-]]
-
-LocalPlayer.CharacterAdded:Connect(function(character)
-    stopRagebotThread()
-    character:WaitForChild("HumanoidRootPart", 10)
-    task.wait(0.5)
-    hrp = nil
-    -- Restart ragebot if it was on
-    if Config.Ragebot.Enabled then
-        task.wait(1)
-        startRagebotThread()
-    end
+    end)
 end)
 
---[[
-    ═══════════════════════════════
-    DONE
-    ═══════════════════════════════
-]]
+Connections.PredictiveStrike = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.PredictiveStrike then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy and distance < 20 then
+            local predictedPos = PredictPosition(enemy, 0.2)
+            if predictedPos then
+                local hrp = LocalPlayer.Character.HumanoidRootPart
+                hrp.CFrame = CFrame.new(hrp.Position, predictedPos)
+            end
+        end
+    end)
+end)
 
-Library:Notify("Rivals Voidspam loaded — Ragebot tab added", 4)
-print("voidspam work")
+Connections.DualPosition = RunService.Heartbeat:Connect(function()
+    if not Config.AntiPatch.DualPosition then return end
+    
+    pcall(function()
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        local realPos = hrp.Position
+        local fakePos = realPos + Vector3.new(
+            math.sin(tick() * 5) * 3,
+            0,
+            math.cos(tick() * 5) * 3
+        )
+        
+        if math.floor(tick() * 10) % 2 == 0 then
+            hrp.CFrame = CFrame.new(fakePos)
+        else
+            hrp.CFrame = CFrame.new(realPos)
+        end
+    end)
+end)
+
+Connections.AutoSwitch = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.AutoSwitch then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy then
+            local currentWeapon = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            local bestWeapon = distance < 10 and "Fists" or (distance < 30 and "Rifle" or "Pistol")
+            
+            if not currentWeapon or currentWeapon.Name ~= bestWeapon then
+                local tool = LocalPlayer.Backpack:FindFirstChild(bestWeapon) or LocalPlayer.Character:FindFirstChild(bestWeapon)
+                if tool and tool.Parent == LocalPlayer.Backpack then
+                    LocalPlayer.Character.Humanoid:EquipTool(tool)
+                end
+            end
+        end
+    end)
+end)
+
+Connections.RushDown = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.RushDown then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy and distance > 15 then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local enemyHRP = enemy.Character.HumanoidRootPart
+            
+            local direction = (enemyHRP.Position - hrp.Position).Unit
+            hrp.CFrame = hrp.CFrame + (direction * 0.5)
+        end
+    end)
+end)
+
+Connections.CornerTrap = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.CornerTrap then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy and distance < 10 then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local enemyHRP = enemy.Character.HumanoidRootPart
+            
+            local behind = enemyHRP.CFrame.LookVector * -2
+            hrp.CFrame = CFrame.new(enemyHRP.Position + behind, enemyHRP.Position)
+        end
+    end)
+end)
+
+Connections.BaitShot = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.BaitShot then return end
+    
+    pcall(function()
+        local enemy = GetClosestEnemy()
+        if enemy and IsInFrontOfEnemy(enemy) then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local dodge = Vector3.new(
+                math.random(-5, 5),
+                0,
+                math.random(-5, 5)
+            )
+            hrp.CFrame = hrp.CFrame + dodge
+        end
+    end)
+end)
+
+Connections.MeleeAbuse = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.MeleeAbuse then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy and distance < 8 then
+            local fists = LocalPlayer.Backpack:FindFirstChild("Fists") or LocalPlayer.Character:FindFirstChild("Fists")
+            if fists and fists.Parent == LocalPlayer.Backpack then
+                LocalPlayer.Character.Humanoid:EquipTool(fists)
+            end
+            
+            if fists and fists.Parent == LocalPlayer.Character then
+                fists:Activate()
+            end
+        end
+    end)
+end)
+
+Connections.StaminaDrain = RunService.Heartbeat:Connect(function()
+    if not Config.WinCondition.StaminaDrain then return end
+    
+    pcall(function()
+        local enemy, distance = GetClosestEnemy()
+        if enemy and distance < 15 then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local enemyHRP = enemy.Character.HumanoidRootPart
+            
+            local circle = tick() * 3
+            local offset = Vector3.new(
+                math.sin(circle) * 8,
+                0,
+                math.cos(circle) * 8
+            )
+            hrp.CFrame = CFrame.new(enemyHRP.Position + offset, enemyHRP.Position)
+        end
+    end)
+end)
+
+Connections.MicroAdjust = RunService.Heartbeat:Connect(function()
+    if not Config.Movement.MicroAdjust then return end
+    
+    pcall(function()
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        hrp.CFrame = hrp.CFrame * CFrame.new(
+            math.random(-1, 1) * 0.1,
+            0,
+            math.random(-1, 1) * 0.1
+        )
+    end)
+end)
+
+Connections.StrafeBot = RunService.Heartbeat:Connect(function()
+    if not Config.Movement.StrafeBot then return end
+    
+    pcall(function()
+        local enemy = GetClosestEnemy()
+        if enemy then
+            local hrp = LocalPlayer.Character.HumanoidRootPart
+            local time = tick() * 2
+            local strafe = Vector3.new(math.sin(time) * 2, 0, 0)
+            hrp.CFrame = hrp.CFrame + strafe
+        end
+    end)
+end)
+
+Connections.AntiPredict = RunService.Heartbeat:Connect(function()
+    if not Config.Movement.AntiPredict then return end
+    
+    pcall(function()
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        if math.random(100) < 30 then
+            hrp.AssemblyLinearVelocity = Vector3.new(
+                math.random(-20, 20),
+                hrp.AssemblyLinearVelocity.Y,
+                math.random(-20, 20)
+            )
+        end
+    end)
+end)
+
+Connections.JitterMove = RunService.Heartbeat:Connect(function()
+    if not Config.Movement.JitterMove then return end
+    
+    pcall(function()
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        if math.floor(tick() * 60) % 3 == 0 then
+            hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(math.random(-45, 45)), 0)
+        end
+    end)
+end)
+
+Connections.FakeLag = RunService.Heartbeat:Connect(function()
+    if not Config.Advanced.FakeLag then return end
+    
+    pcall(function()
+        local hrp = LocalPlayer.Character.HumanoidRootPart
+        if math.floor(tick() * 10) % 7 == 0 then
+            hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
+            task.wait(0.05)
+        end
+    end)
+end)
+
+Connections.SpamCrouch = RunService.Heartbeat:Connect(function()
+    if not Config.Advanced.SpamCrouch then return end
+    
+    pcall(function()
+        local humanoid = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if humanoid and math.floor(tick() * 10) % 2 == 0 then
+            humanoid.Sit = not humanoid.Sit
+        end
+    end)
+end)
+
+local utility = require(ReplicatedStorage.Modules.Utility)
+local originalRaycast = utility.Raycast
+
+utility.Raycast = function(...)
+    local args = {...}
+    
+    if Config.SilentAim.Enabled and args[4] == 999 then
+        local enemy = GetClosestEnemy()
+        
+        if enemy then
+            local hitChance = math.random(100)
+            if hitChance <= Config.SilentAim.HitChance then
+                local targetPos = PredictPosition(enemy, Config.SilentAim.Prediction)
+                if targetPos then
+                    args[3] = targetPos
+                end
+            end
+        end
+    end
+    
+    return originalRaycast(...)
+end
+
+local Window = Rayfield:CreateWindow({
+    Name = "Rivals Season 3 HvH",
+    LoadingTitle = "Loading HvH Script",
+    LoadingSubtitle = "by HvH Master",
+    ConfigurationSaving = {
+        Enabled = true,
+        FolderName = "RivalsHvH",
+        FileName = "HvHConfig"
+    },
+})
+
+local AntiPatchTab = Window:CreateTab("Anti-Patch", "shield")
+local WinTab = Window:CreateTab("Win Condition", "trophy")
+local CombatTab = Window:CreateTab("Combat", "crosshair")
+local MovementTab = Window:CreateTab("Movement", "zap")
+local AdvancedTab = Window:CreateTab("Advanced", "settings")
+
+local AntiPatchSection = AntiPatchTab:CreateSection("Post-Patch Methods")
+
+AntiPatchTab:CreateToggle({
+    Name = "Hybrid Desync",
+    CurrentValue = false,
+    Flag = "HybridDesync",
+    Callback = function(v)
+        Config.AntiPatch.HybridDesync = v
+    end,
+})
+
+AntiPatchTab:CreateToggle({
+    Name = "Micro TP",
+    CurrentValue = false,
+    Flag = "MicroTP",
+    Callback = function(v)
+        Config.AntiPatch.MicroTP = v
+    end,
+})
+
+AntiPatchTab:CreateToggle({
+    Name = "Phantom Hit",
+    CurrentValue = false,
+    Flag = "PhantomHit",
+    Callback = function(v)
+        Config.AntiPatch.PhantomHit = v
+    end,
+})
+
+AntiPatchTab:CreateToggle({
+    Name = "Frame Skip",
+    CurrentValue = false,
+    Flag = "FrameSkip",
+    Callback = function(v)
+        Config.AntiPatch.FrameSkip = v
+    end,
+})
+
+AntiPatchTab:CreateToggle({
+    Name = "Predictive Strike",
+    CurrentValue = false,
+    Flag = "PredictiveStrike",
+    Callback = function(v)
+        Config.AntiPatch.PredictiveStrike = v
+    end,
+})
+
+AntiPatchTab:CreateToggle({
+    Name = "Dual Position",
+    CurrentValue = false,
+    Flag = "DualPosition",
+    Callback = function(v)
+        Config.AntiPatch.DualPosition = v
+    end,
+})
+
+local WinSection = WinTab:CreateSection("Win Strategies")
+
+WinTab:CreateToggle({
+    Name = "Auto Weapon Switch",
+    CurrentValue = false,
+    Flag = "AutoSwitch",
+    Callback = function(v)
+        Config.WinCondition.AutoSwitch = v
+    end,
+})
+
+WinTab:CreateToggle({
+    Name = "Rush Down",
+    CurrentValue = false,
+    Flag = "RushDown",
+    Callback = function(v)
+        Config.WinCondition.RushDown = v
+    end,
+})
+
+WinTab:CreateToggle({
+    Name = "Corner Trap",
+    CurrentValue = false,
+    Flag = "CornerTrap",
+    Callback = function(v)
+        Config.WinCondition.CornerTrap = v
+    end,
+})
+
+WinTab:CreateToggle({
+    Name = "Bait Shot",
+    CurrentValue = false,
+    Flag = "BaitShot",
+    Callback = function(v)
+        Config.WinCondition.BaitShot = v
+    end,
+})
+
+WinTab:CreateToggle({
+    Name = "Melee Abuse",
+    CurrentValue = false,
+    Flag = "MeleeAbuse",
+    Callback = function(v)
+        Config.WinCondition.MeleeAbuse = v
+    end,
+})
+
+WinTab:CreateToggle({
+    Name = "Stamina Drain",
+    CurrentValue = false,
+    Flag = "StaminaDrain",
+    Callback = function(v)
+        Config.WinCondition.StaminaDrain = v
+    end,
+})
+
+local CombatSection = CombatTab:CreateSection("Silent Aim")
+
+CombatTab:CreateToggle({
+    Name = "Enable Silent Aim",
+    CurrentValue = false,
+    Flag = "SilentAim",
+    Callback = function(v)
+        Config.SilentAim.Enabled = v
+    end,
+})
+
+CombatTab:CreateSlider({
+    Name = "Hit Chance %",
+    Range = {0, 100},
+    Increment = 1,
+    CurrentValue = 100,
+    Flag = "HitChance",
+    Callback = function(v)
+        Config.SilentAim.HitChance = v
+    end,
+})
+
+CombatTab:CreateSlider({
+    Name = "Prediction",
+    Range = {0, 0.5},
+    Increment = 0.01,
+    CurrentValue = 0.15,
+    Flag = "Prediction",
+    Callback = function(v)
+        Config.SilentAim.Prediction = v
+    end,
+})
+
+local MovementSection = MovementTab:CreateSection("Movement Options")
+
+MovementTab:CreateToggle({
+    Name = "Micro Adjust",
+    CurrentValue = false,
+    Flag = "MicroAdjust",
+    Callback = function(v)
+        Config.Movement.MicroAdjust = v
+    end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Strafe Bot",
+    CurrentValue = false,
+    Flag = "StrafeBot",
+    Callback = function(v)
+        Config.Movement.StrafeBot = v
+    end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Anti Predict",
+    CurrentValue = false,
+    Flag = "AntiPredict",
+    Callback = function(v)
+        Config.Movement.AntiPredict = v
+    end,
+})
+
+MovementTab:CreateToggle({
+    Name = "Jitter Move",
+    CurrentValue = false,
+    Flag = "JitterMove",
+    Callback = function(v)
+        Config.Movement.JitterMove = v
+    end,
+})
+
+local AdvancedSection = AdvancedTab:CreateSection("Advanced Features")
+
+AdvancedTab:CreateToggle({
+    Name = "Fake Lag",
+    CurrentValue = false,
+    Flag = "FakeLag",
+    Callback = function(v)
+        Config.Advanced.FakeLag = v
+    end,
+})
+
+AdvancedTab:CreateToggle({
+    Name = "Spam Crouch",
+    CurrentValue = false,
+    Flag = "SpamCrouch",
+    Callback = function(v)
+        Config.Advanced.SpamCrouch = v
+    end,
+})
+
+AdvancedTab:CreateButton({
+    Name = "Destroy GUI",
+    Callback = function()
+        for _, conn in pairs(Connections) do
+            if typeof(conn) == "RBXScriptConnection" then
+                conn:Disconnect()
+            end
+        end
+        Rayfield:Destroy()
+    end,
+})
+
+Rayfield:LoadConfiguration()
+
+print("rivals season 3 hvh loaded")
