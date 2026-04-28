@@ -1,7 +1,5 @@
--- // Flick Script v2 — Fixed Local Tracer + Knife Features
--- // Rayfield UI + Mobile Support
-
-local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+-- // Flick Script v3 — Built-in UI (No Rayfield needed)
+-- // Works on any executor, no HTTP required
 
 -- Services
 local p   = game:GetService("Players")
@@ -29,18 +27,16 @@ local ConnectM6D         = GunRemote:WaitForChild("ConnectM6D")
 local cfg = {
     tracerEnabled  = true,
     tracerColor    = Color3.fromRGB(0, 100, 255),
-    useGameColor   = false,  -- OFF by default so YOUR color shows
+    useGameColor   = false,
     tracerWidth    = 0.08,
     tracerDuration = 0.25,
     tracerMaterial = Enum.Material.Neon,
-
     autoReload     = true,
     reloadDelay    = 0.1,
-
     knifeEnabled   = false,
-    knifeMode      = "AutoStab",  -- "AutoStab" or "TpToPlayer"
-    knifeDelay     = 0.3,         -- slider controlled
-    knifeRange     = 20,          -- max stab range studs
+    knifeMode      = "AutoStab",
+    knifeDelay     = 0.3,
+    knifeRange     = 20,
 }
 
 local threads = {}
@@ -48,150 +44,571 @@ local function StopThread(n)
     if threads[n] then task.cancel(threads[n]); threads[n] = nil end
 end
 
-local function Notify(title, content, dur)
-    Rayfield:Notify({Title=title, Content=content, Duration=dur or 3, Image=4483345998})
-end
-
 -- ============================================================
--- // GUI
+-- // UI BUILDER
 -- ============================================================
 local sg = Instance.new("ScreenGui")
-sg.Name = "FlickScript"
+sg.Name = "FlickV3"
 sg.ResetOnSpawn = false
 sg.IgnoreGuiInset = true
-sg.DisplayOrder = 100
+sg.DisplayOrder = 999
 sg.Parent = lp.PlayerGui
 
-local statusLbl = Instance.new("TextLabel")
-statusLbl.BackgroundColor3       = Color3.fromRGB(0,0,0)
-statusLbl.BackgroundTransparency = 0.4
-statusLbl.Size                   = UDim2.new(0,220,0,30)
-statusLbl.AnchorPoint            = Vector2.new(0.5,0)
-statusLbl.Position               = UDim2.new(0.5,0,0,10)
-statusLbl.TextColor3             = Color3.fromRGB(0,200,255)
-statusLbl.TextSize               = 12
-statusLbl.Font                   = Enum.Font.GothamBold
-statusLbl.BorderSizePixel        = 0
-statusLbl.Parent                 = sg
-Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0,6)
+-- Colors
+local COL_BG     = Color3.fromRGB(18, 18, 24)
+local COL_PANEL  = Color3.fromRGB(28, 28, 36)
+local COL_ACCENT = Color3.fromRGB(0, 180, 255)
+local COL_ON     = Color3.fromRGB(0, 220, 100)
+local COL_OFF    = Color3.fromRGB(220, 60, 60)
+local COL_TEXT   = Color3.fromRGB(220, 220, 220)
+local COL_MUTED  = Color3.fromRGB(130, 130, 150)
+local COL_BTN    = Color3.fromRGB(40, 40, 55)
 
-local function UpdateStatus()
-    statusLbl.Text = string.format(
-        "💥 Tracer: %s  🔄 Reload: %s  🔪 Knife: %s",
-        cfg.tracerEnabled and "ON" or "OFF",
-        cfg.autoReload    and "ON" or "OFF",
-        cfg.knifeEnabled  and "ON" or "OFF"
-    )
+-- Helper: round corner
+local function rc(inst, r)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 6)
+    c.Parent = inst
 end
-UpdateStatus()
+
+-- Helper: make label
+local function mkLabel(parent, txt, size, color, font, xalign)
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Text = txt
+    l.TextSize = size or 13
+    l.TextColor3 = color or COL_TEXT
+    l.Font = font or Enum.Font.Gotham
+    l.TextXAlignment = xalign or Enum.TextXAlignment.Left
+    l.Size = UDim2.new(1,0,1,0)
+    l.Parent = parent
+    return l
+end
+
+-- Main window frame
+local win = Instance.new("Frame")
+win.Size = UDim2.new(0, 280, 0, 420)
+win.Position = UDim2.new(0, 16, 0.5, -210)
+win.BackgroundColor3 = COL_BG
+win.BorderSizePixel = 0
+win.Active = true
+win.Draggable = true
+win.Parent = sg
+rc(win, 10)
+
+-- Title bar
+local titleBar = Instance.new("Frame")
+titleBar.Size = UDim2.new(1,0,0,36)
+titleBar.BackgroundColor3 = COL_ACCENT
+titleBar.BorderSizePixel = 0
+titleBar.Parent = win
+rc(titleBar, 10)
+-- Fix bottom corners of title bar
+local titleFix = Instance.new("Frame")
+titleFix.Size = UDim2.new(1,0,0.5,0)
+titleFix.Position = UDim2.new(0,0,0.5,0)
+titleFix.BackgroundColor3 = COL_ACCENT
+titleFix.BorderSizePixel = 0
+titleFix.Parent = titleBar
+
+local titleLbl = Instance.new("TextLabel")
+titleLbl.BackgroundTransparency = 1
+titleLbl.Size = UDim2.new(1,-40,1,0)
+titleLbl.Position = UDim2.new(0,12,0,0)
+titleLbl.Text = "💥 Flick Script v3"
+titleLbl.TextSize = 14
+titleLbl.TextColor3 = Color3.fromRGB(255,255,255)
+titleLbl.Font = Enum.Font.GothamBold
+titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+titleLbl.Parent = titleBar
+
+-- Close / minimize button
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0,24,0,24)
+closeBtn.Position = UDim2.new(1,-30,0,6)
+closeBtn.BackgroundColor3 = Color3.fromRGB(220,60,60)
+closeBtn.Text = "✕"
+closeBtn.TextSize = 12
+closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.BorderSizePixel = 0
+closeBtn.Parent = titleBar
+rc(closeBtn, 12)
+
+local hidden = false
+closeBtn.MouseButton1Click:Connect(function()
+    hidden = not hidden
+    -- hide everything except title bar
+    for _, c in ipairs(win:GetChildren()) do
+        if c ~= titleBar then c.Visible = not hidden end
+    end
+    closeBtn.Text = hidden and "▼" or "✕"
+    win.Size = hidden and UDim2.new(0,280,0,36) or UDim2.new(0,280,0,420)
+end)
+closeBtn.TouchTap:Connect(function()
+    hidden = not hidden
+    for _, c in ipairs(win:GetChildren()) do
+        if c ~= titleBar then c.Visible = not hidden end
+    end
+    closeBtn.Text = hidden and "▼" or "✕"
+    win.Size = hidden and UDim2.new(0,280,0,36) or UDim2.new(0,280,0,420)
+end)
+
+-- Tab buttons
+local tabBar = Instance.new("Frame")
+tabBar.Size = UDim2.new(1,-16,0,30)
+tabBar.Position = UDim2.new(0,8,0,42)
+tabBar.BackgroundTransparency = 1
+tabBar.Parent = win
+local tabLayout = Instance.new("UIListLayout")
+tabLayout.FillDirection = Enum.FillDirection.Horizontal
+tabLayout.Padding = UDim.new(0,6)
+tabLayout.Parent = tabBar
+
+-- Scroll content area
+local content = Instance.new("ScrollingFrame")
+content.Size = UDim2.new(1,-16,1,-88)
+content.Position = UDim2.new(0,8,0,78)
+content.BackgroundTransparency = 1
+content.BorderSizePixel = 0
+content.ScrollBarThickness = 3
+content.ScrollBarImageColor3 = COL_ACCENT
+content.CanvasSize = UDim2.new(0,0,0,0)
+content.AutomaticCanvasSize = Enum.AutomaticSize.Y
+content.Parent = win
+local contentLayout = Instance.new("UIListLayout")
+contentLayout.Padding = UDim.new(0,6)
+contentLayout.Parent = content
+
+-- Tab system
+local tabs = {}
+local tabContents = {}
+local activeTab = nil
+
+local function SetTab(name)
+    activeTab = name
+    for n, btn in pairs(tabs) do
+        btn.BackgroundColor3 = n == name and COL_ACCENT or COL_BTN
+        btn.TextColor3 = n == name and Color3.fromRGB(255,255,255) or COL_MUTED
+    end
+    for n, frame in pairs(tabContents) do
+        frame.Visible = n == name
+    end
+end
+
+local function AddTab(name, icon)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0,72,1,0)
+    btn.BackgroundColor3 = COL_BTN
+    btn.Text = icon.." "..name
+    btn.TextSize = 11
+    btn.TextColor3 = COL_MUTED
+    btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel = 0
+    btn.Parent = tabBar
+    rc(btn, 6)
+    tabs[name] = btn
+
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1,0,1,0)
+    frame.BackgroundTransparency = 1
+    frame.Visible = false
+    frame.Parent = content
+    local fl = Instance.new("UIListLayout")
+    fl.Padding = UDim.new(0,6)
+    fl.Parent = frame
+    tabContents[name] = frame
+
+    btn.MouseButton1Click:Connect(function() SetTab(name) end)
+    btn.TouchTap:Connect(function() SetTab(name) end)
+    return frame
+end
+
+-- Row helper
+local function AddRow(parent, h)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1,0,0, h or 36)
+    row.BackgroundColor3 = COL_PANEL
+    row.BorderSizePixel = 0
+    row.Parent = parent
+    rc(row, 6)
+    return row
+end
+
+-- Toggle helper
+local function AddToggle(parent, label, default, callback)
+    local row = AddRow(parent, 36)
+    local lbl = Instance.new("TextLabel")
+    lbl.BackgroundTransparency = 1
+    lbl.Size = UDim2.new(1,-56,1,0)
+    lbl.Position = UDim2.new(0,10,0,0)
+    lbl.Text = label
+    lbl.TextSize = 13
+    lbl.TextColor3 = COL_TEXT
+    lbl.Font = Enum.Font.Gotham
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Parent = row
+
+    local tog = Instance.new("TextButton")
+    tog.Size = UDim2.new(0,40,0,22)
+    tog.Position = UDim2.new(1,-48,0.5,-11)
+    tog.BackgroundColor3 = default and COL_ON or COL_OFF
+    tog.Text = default and "ON" or "OFF"
+    tog.TextSize = 11
+    tog.TextColor3 = Color3.fromRGB(255,255,255)
+    tog.Font = Enum.Font.GothamBold
+    tog.BorderSizePixel = 0
+    tog.Parent = row
+    rc(tog, 4)
+
+    local state = default
+    local function fire()
+        state = not state
+        tog.BackgroundColor3 = state and COL_ON or COL_OFF
+        tog.Text = state and "ON" or "OFF"
+        callback(state)
+    end
+    tog.MouseButton1Click:Connect(fire)
+    tog.TouchTap:Connect(fire)
+    return tog
+end
+
+-- Slider helper
+local function AddSlider(parent, label, min, max, default, suffix, callback)
+    local row = AddRow(parent, 52)
+    local topLbl = Instance.new("TextLabel")
+    topLbl.BackgroundTransparency = 1
+    topLbl.Size = UDim2.new(1,-10,0,20)
+    topLbl.Position = UDim2.new(0,10,0,2)
+    topLbl.Text = label..": "..default..(suffix or "")
+    topLbl.TextSize = 12
+    topLbl.TextColor3 = COL_TEXT
+    topLbl.Font = Enum.Font.Gotham
+    topLbl.TextXAlignment = Enum.TextXAlignment.Left
+    topLbl.Parent = row
+
+    local track = Instance.new("Frame")
+    track.Size = UDim2.new(1,-20,0,6)
+    track.Position = UDim2.new(0,10,0,30)
+    track.BackgroundColor3 = COL_BTN
+    track.BorderSizePixel = 0
+    track.Parent = row
+    rc(track, 3)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new((default-min)/(max-min),0,1,0)
+    fill.BackgroundColor3 = COL_ACCENT
+    fill.BorderSizePixel = 0
+    fill.Parent = track
+    rc(fill, 3)
+
+    local knob = Instance.new("TextButton")
+    knob.Size = UDim2.new(0,14,0,14)
+    knob.AnchorPoint = Vector2.new(0.5,0.5)
+    knob.Position = UDim2.new((default-min)/(max-min),0,0.5,0)
+    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+    knob.Text = ""
+    knob.BorderSizePixel = 0
+    knob.Parent = track
+    rc(knob, 7)
+
+    local dragging = false
+    local function update(x)
+        local abs = track.AbsolutePosition.X
+        local w   = track.AbsoluteSize.X
+        local pct = math.clamp((x - abs) / w, 0, 1)
+        local val = math.floor(min + (max-min)*pct + 0.5)
+        fill.Size = UDim2.new(pct,0,1,0)
+        knob.Position = UDim2.new(pct,0,0.5,0)
+        topLbl.Text = label..": "..val..(suffix or "")
+        callback(val)
+    end
+
+    knob.MouseButton1Down:Connect(function() dragging=true end)
+    knob.TouchLongPress:Connect(function() dragging=true end)
+    uis.InputChanged:Connect(function(inp)
+        if dragging and (inp.UserInputType==Enum.UserInputType.MouseMovement
+            or inp.UserInputType==Enum.UserInputType.Touch) then
+            update(inp.Position.X)
+        end
+    end)
+    uis.InputEnded:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+            or inp.UserInputType==Enum.UserInputType.Touch then
+            dragging=false
+        end
+    end)
+    track.InputBegan:Connect(function(inp)
+        if inp.UserInputType==Enum.UserInputType.MouseButton1
+            or inp.UserInputType==Enum.UserInputType.Touch then
+            update(inp.Position.X)
+        end
+    end)
+end
+
+-- Button helper
+local function AddButton(parent, label, callback)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(1,0,0,34)
+    btn.BackgroundColor3 = COL_ACCENT
+    btn.Text = label
+    btn.TextSize = 13
+    btn.TextColor3 = Color3.fromRGB(255,255,255)
+    btn.Font = Enum.Font.GothamBold
+    btn.BorderSizePixel = 0
+    btn.Parent = parent
+    rc(btn, 6)
+    btn.MouseButton1Click:Connect(callback)
+    btn.TouchTap:Connect(callback)
+    return btn
+end
+
+-- Section label helper
+local function AddSection(parent, txt)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(1,0,0,20)
+    row.BackgroundTransparency = 1
+    row.Parent = parent
+    local l = Instance.new("TextLabel")
+    l.BackgroundTransparency = 1
+    l.Size = UDim2.new(1,0,1,0)
+    l.Text = "— "..txt.." —"
+    l.TextSize = 11
+    l.TextColor3 = COL_ACCENT
+    l.Font = Enum.Font.GothamBold
+    l.TextXAlignment = Enum.TextXAlignment.Center
+    l.Parent = row
+end
 
 -- ============================================================
--- // TRACER DRAW
+-- // BUILD TABS
+-- ============================================================
+local tTracer = AddTab("Tracer", "💥")
+local tReload = AddTab("Reload", "🔄")
+local tKnife  = AddTab("Knife",  "🔪")
+SetTab("Tracer")
+
+-- ── Tracer Tab ────────────────────────────────────────────────
+AddSection(tTracer, "Your Bullets")
+AddToggle(tTracer, "Enable Tracer", true, function(v)
+    cfg.tracerEnabled = v
+end)
+
+-- Color picker (simple preset buttons)
+local colorRow = AddRow(tTracer, 60)
+local colorLbl = Instance.new("TextLabel")
+colorLbl.BackgroundTransparency=1
+colorLbl.Size=UDim2.new(1,0,0,18)
+colorLbl.Position=UDim2.new(0,10,0,4)
+colorLbl.Text="Tracer Color:"
+colorLbl.TextSize=12
+colorLbl.TextColor3=COL_TEXT
+colorLbl.Font=Enum.Font.Gotham
+colorLbl.TextXAlignment=Enum.TextXAlignment.Left
+colorLbl.Parent=colorRow
+
+local colors = {
+    {name="Blue",  c=Color3.fromRGB(0,100,255)},
+    {name="Red",   c=Color3.fromRGB(255,50,50)},
+    {name="Green", c=Color3.fromRGB(0,255,100)},
+    {name="Cyan",  c=Color3.fromRGB(0,255,220)},
+    {name="White", c=Color3.fromRGB(255,255,255)},
+}
+local colorBtnFrame = Instance.new("Frame")
+colorBtnFrame.BackgroundTransparency=1
+colorBtnFrame.Size=UDim2.new(1,-10,0,26)
+colorBtnFrame.Position=UDim2.new(0,10,0,26)
+colorBtnFrame.Parent=colorRow
+local cbl = Instance.new("UIListLayout")
+cbl.FillDirection=Enum.FillDirection.Horizontal
+cbl.Padding=UDim.new(0,4)
+cbl.Parent=colorBtnFrame
+
+local selectedColorBtn = nil
+for _, cd in ipairs(colors) do
+    local cb = Instance.new("TextButton")
+    cb.Size=UDim2.new(0,44,0,22)
+    cb.BackgroundColor3=cd.c
+    cb.Text=cd.name
+    cb.TextSize=10
+    cb.TextColor3=Color3.fromRGB(255,255,255)
+    cb.Font=Enum.Font.GothamBold
+    cb.BorderSizePixel=0
+    cb.Parent=colorBtnFrame
+    rc(cb,4)
+    local function pick()
+        cfg.tracerColor = cd.c
+        if selectedColorBtn then
+            selectedColorBtn.BorderSizePixel=0
+        end
+        cb.BorderSizePixel=2
+        selectedColorBtn=cb
+    end
+    cb.MouseButton1Click:Connect(pick)
+    cb.TouchTap:Connect(pick)
+    if cd.name=="Blue" then pick() end
+end
+
+AddToggle(tTracer, "Use Enemy's Color", false, function(v)
+    cfg.useGameColor = v
+end)
+AddSection(tTracer, "Style")
+AddSlider(tTracer, "Width", 2, 20, 8, "cm", function(v) cfg.tracerWidth=v/100 end)
+AddSlider(tTracer, "Duration", 5, 100, 25, "ms", function(v) cfg.tracerDuration=v/100 end)
+
+-- ── Reload Tab ────────────────────────────────────────────────
+AddSection(tReload, "Auto Reload")
+AddToggle(tReload, "Enable Auto Reload", true, function(v)
+    cfg.autoReload = v
+end)
+AddSlider(tReload, "Reload Delay", 0, 50, 10, "ms", function(v)
+    cfg.reloadDelay = v/100
+end)
+AddButton(tReload, "🔄 Reload Now", function()
+    pcall(function() ReloadRemote:FireServer() end)
+end)
+
+-- ── Knife Tab ─────────────────────────────────────────────────
+AddSection(tKnife, "Knife Mode")
+
+-- Mode buttons
+local modeRow = AddRow(tKnife, 36)
+local modeLabel = Instance.new("TextLabel")
+modeLabel.BackgroundTransparency=1
+modeLabel.Size=UDim2.new(0,90,1,0)
+modeLabel.Position=UDim2.new(0,10,0,0)
+modeLabel.Text="Mode:"
+modeLabel.TextSize=13
+modeLabel.TextColor3=COL_TEXT
+modeLabel.Font=Enum.Font.Gotham
+modeLabel.TextXAlignment=Enum.TextXAlignment.Left
+modeLabel.Parent=modeRow
+
+local stabBtn = Instance.new("TextButton")
+stabBtn.Size=UDim2.new(0,80,0,24)
+stabBtn.Position=UDim2.new(0,70,0.5,-12)
+stabBtn.BackgroundColor3=COL_ACCENT
+stabBtn.Text="AutoStab"
+stabBtn.TextSize=11
+stabBtn.TextColor3=Color3.fromRGB(255,255,255)
+stabBtn.Font=Enum.Font.GothamBold
+stabBtn.BorderSizePixel=0
+stabBtn.Parent=modeRow
+rc(stabBtn,4)
+
+local tpBtn = Instance.new("TextButton")
+tpBtn.Size=UDim2.new(0,80,0,24)
+tpBtn.Position=UDim2.new(0,158,0.5,-12)
+tpBtn.BackgroundColor3=COL_BTN
+tpBtn.Text="TpToPlayer"
+tpBtn.TextSize=11
+tpBtn.TextColor3=COL_MUTED
+tpBtn.Font=Enum.Font.GothamBold
+tpBtn.BorderSizePixel=0
+tpBtn.Parent=modeRow
+rc(tpBtn,4)
+
+local function SetMode(m)
+    cfg.knifeMode = m
+    stabBtn.BackgroundColor3 = m=="AutoStab" and COL_ACCENT or COL_BTN
+    stabBtn.TextColor3 = m=="AutoStab" and Color3.fromRGB(255,255,255) or COL_MUTED
+    tpBtn.BackgroundColor3 = m=="TpToPlayer" and COL_ACCENT or COL_BTN
+    tpBtn.TextColor3 = m=="TpToPlayer" and Color3.fromRGB(255,255,255) or COL_MUTED
+end
+stabBtn.MouseButton1Click:Connect(function() SetMode("AutoStab") end)
+stabBtn.TouchTap:Connect(function() SetMode("AutoStab") end)
+tpBtn.MouseButton1Click:Connect(function() SetMode("TpToPlayer") end)
+tpBtn.TouchTap:Connect(function() SetMode("TpToPlayer") end)
+
+AddToggle(tKnife, "Enable Knife", false, function(v)
+    cfg.knifeEnabled = v
+    if v then StartKnife() else StopThread("knife") end
+end)
+
+AddSection(tKnife, "Speed — keep above 100ms")
+AddSlider(tKnife, "Action Delay", 10, 200, 100, "ms", function(v)
+    cfg.knifeDelay = v/1000
+end)
+
+AddSection(tKnife, "Range (AutoStab only)")
+AddSlider(tKnife, "Stab Range", 5, 50, 20, " studs", function(v)
+    cfg.knifeRange = v
+end)
+
+AddButton(tKnife, "🔪 Stab Once", function()
+    local attach = GetKnife()
+    if attach then
+        pcall(function() ConnectM6D:FireServer(attach) end)
+    end
+end)
+
+-- ============================================================
+-- // TRACER LOGIC
 -- ============================================================
 local function DrawTracer(origin, endpoint, color)
     local c = cfg.useGameColor and color or cfg.tracerColor
     local dist = (endpoint - origin).Magnitude
     if dist < 0.5 then return end
-
     local beam = Instance.new("Part")
-    beam.Anchored    = true
-    beam.CanCollide  = false
-    beam.CastShadow  = false
-    beam.Material    = cfg.tracerMaterial
-    beam.Color       = c
-    beam.Size        = Vector3.new(cfg.tracerWidth, cfg.tracerWidth, dist)
-    beam.CFrame      = CFrame.new(origin, endpoint) * CFrame.new(0, 0, -dist/2)
-    beam.Parent      = workspace
-
-    local t = 0
-    local conn
-    conn = run.Heartbeat:Connect(function(dt)
-        t = t + dt
-        beam.Transparency = t / cfg.tracerDuration
-        if t >= cfg.tracerDuration then
-            conn:Disconnect()
-            beam:Destroy()
-        end
+    beam.Anchored=true; beam.CanCollide=false; beam.CastShadow=false
+    beam.Material=cfg.tracerMaterial; beam.Color=c
+    beam.Size=Vector3.new(cfg.tracerWidth,cfg.tracerWidth,dist)
+    beam.CFrame=CFrame.new(origin,endpoint)*CFrame.new(0,0,-dist/2)
+    beam.Parent=workspace
+    local t=0; local conn
+    conn=run.Heartbeat:Connect(function(dt)
+        t=t+dt
+        beam.Transparency=t/cfg.tracerDuration
+        if t>=cfg.tracerDuration then conn:Disconnect(); beam:Destroy() end
     end)
 end
 
--- Impact flash
 local function DrawFlash(pos, color)
-    local f = Instance.new("Part")
-    f.Anchored   = true
-    f.CanCollide = false
-    f.CastShadow = false
-    f.Material   = Enum.Material.Neon
-    f.Color      = color or cfg.tracerColor
-    f.Shape      = Enum.PartType.Ball
-    f.Size       = Vector3.one * 0.5
-    f.Position   = pos
-    f.Parent     = workspace
-    local t = 0
-    local conn
-    conn = run.Heartbeat:Connect(function(dt)
-        t = t + dt
-        local a = t / 0.15
-        f.Transparency = a
-        f.Size = Vector3.one * (0.5 + a * 0.5)
-        if a >= 1 then conn:Disconnect(); f:Destroy() end
+    local f=Instance.new("Part")
+    f.Anchored=true; f.CanCollide=false; f.Material=Enum.Material.Neon
+    f.Color=color or cfg.tracerColor; f.Shape=Enum.PartType.Ball
+    f.Size=Vector3.one*0.5; f.Position=pos; f.Parent=workspace
+    local t=0; local conn
+    conn=run.Heartbeat:Connect(function(dt)
+        t=t+dt; local a=t/0.15
+        f.Transparency=a; f.Size=Vector3.one*(0.5+a*0.5)
+        if a>=1 then conn:Disconnect(); f:Destroy() end
     end)
 end
 
--- ============================================================
--- // FIX: HOOK LOCAL PLAYER'S OWN SHOTS
--- // CheckShot fires when YOU shoot — args[5]=origin CFrame, args[6]=endpoint
--- // We intercept FireServer to draw YOUR tracer in your custom color
--- ============================================================
+-- Hook YOUR shots via CheckShot.FireServer
 local origCheckShotFire = CheckShot.FireServer
 CheckShot.FireServer = function(self, ...)
-    -- Draw local tracer BEFORE firing to server
     if cfg.tracerEnabled then
         local args = {...}
-        -- args[5] = origin CFrame, args[6] = endpoint vector
         local originCF  = args[5]
         local endpointV = args[6]
-        if originCF and endpointV then
-            local ok1 = typeof(originCF)  == "CFrame"
-            local ok2 = typeof(endpointV) == "Vector3"
-                     or (type(endpointV) == "vector")
-            if ok1 and ok2 then
-                local origin = originCF.Position
-                local endpoint = typeof(endpointV) == "Vector3"
-                    and endpointV
-                    or  Vector3.new(endpointV.X, endpointV.Y, endpointV.Z)
-                DrawTracer(origin, endpoint, cfg.tracerColor)
-            end
+        if typeof(originCF)=="CFrame" and endpointV then
+            local ep = typeof(endpointV)=="Vector3"
+                and endpointV
+                or Vector3.new(endpointV.X, endpointV.Y, endpointV.Z)
+            DrawTracer(originCF.Position, ep, cfg.tracerColor)
         end
     end
     return origCheckShotFire(self, ...)
 end
 
--- Enemy/other player tracers (from server broadcast)
+-- Enemy tracers
 ProjectileRender.OnClientEvent:Connect(function(data)
-    if not cfg.tracerEnabled then return end
-    if type(data) ~= "table" then return end
-    local o = data.Origin
-    local e = data.Endpoint
-    local c = data.LaserColor or cfg.tracerColor
+    if not cfg.tracerEnabled or type(data)~="table" then return end
+    local o,e,c = data.Origin, data.Endpoint, data.LaserColor or cfg.tracerColor
     if o and e then
-        DrawTracer(
-            Vector3.new(o.X, o.Y, o.Z),
-            Vector3.new(e.X, e.Y, e.Z),
-            c
-        )
+        DrawTracer(Vector3.new(o.X,o.Y,o.Z), Vector3.new(e.X,e.Y,e.Z), c)
     end
 end)
 
 ProjectileFinished.OnClientEvent:Connect(function(data)
-    if not cfg.tracerEnabled then return end
-    if type(data) ~= "table" then return end
-    local hitCF = data.CFrame
-    if hitCF then DrawFlash(hitCF.Position, data.ExpColor or data.LaserColor) end
+    if not cfg.tracerEnabled or type(data)~="table" then return end
+    if data.CFrame then DrawFlash(data.CFrame.Position, data.ExpColor or data.LaserColor) end
 end)
 
 -- ============================================================
--- // AUTO RELOAD
+-- // AUTO RELOAD LOGIC
 -- ============================================================
 local origCheckFire = CheckFire.FireServer
 CheckFire.FireServer = function(self, ...)
@@ -202,89 +619,66 @@ CheckFire.FireServer = function(self, ...)
     end
     return origCheckFire(self, ...)
 end
-
--- Backup reload loop
 task.spawn(function()
     while true do
         task.wait(0.5)
-        if cfg.autoReload then
-            pcall(function() ReloadRemote:FireServer() end)
-        end
+        if cfg.autoReload then pcall(function() ReloadRemote:FireServer() end) end
     end
 end)
 
 -- ============================================================
--- // KNIFE FEATURES
+-- // KNIFE LOGIC
 -- ============================================================
+local function GetKnife()
+    local char = lp.Character
+    if not char then return nil end
+    local knife = char:FindFirstChild("Knife")
+    return knife and knife:FindFirstChild("BodyAttach") or nil
+end
 
--- Get closest player within range
 local function GetClosestPlayer(range)
     local char = lp.Character
     if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
     local myPos = char.HumanoidRootPart.Position
     local closest, closestDist = nil, range
-
     for _, plr in ipairs(p:GetPlayers()) do
         if plr ~= lp then
             local c2 = plr.Character
             if c2 and c2:FindFirstChild("HumanoidRootPart") then
                 local d = (c2.HumanoidRootPart.Position - myPos).Magnitude
-                if d < closestDist then
-                    closest = plr
-                    closestDist = d
-                end
+                if d < closestDist then closest=plr; closestDist=d end
             end
         end
     end
     return closest
 end
 
--- Get local knife attachment
-local function GetKnife()
-    local char = lp.Character
-    if not char then return nil end
-    local knife = char:FindFirstChild("Knife")
-    if knife then return knife:FindFirstChild("BodyAttach") end
-    return nil
-end
-
--- Trigger a stab (fires ConnectM6D with knife attachment)
 local function DoStab()
     local attach = GetKnife()
-    if attach then
-        pcall(function()
-            ConnectM6D:FireServer(attach)
-        end)
-    end
+    if attach then pcall(function() ConnectM6D:FireServer(attach) end) end
 end
 
--- Auto Stab loop — stabs closest player in range repeatedly
 local function StartAutoStab()
     StopThread("knife")
     threads["knife"] = task.spawn(function()
-        while cfg.knifeEnabled and cfg.knifeMode == "AutoStab" do
-            local target = GetClosestPlayer(cfg.knifeRange)
-            if target and target.Character then
-                DoStab()
-            end
+        while cfg.knifeEnabled and cfg.knifeMode=="AutoStab" do
+            if GetClosestPlayer(cfg.knifeRange) then DoStab() end
             task.wait(cfg.knifeDelay)
         end
     end)
 end
 
--- TP to Player + Stab — teleports to closest enemy then stabs
 local function StartTpStab()
     StopThread("knife")
     threads["knife"] = task.spawn(function()
-        while cfg.knifeEnabled and cfg.knifeMode == "TpToPlayer" do
-            local target = GetClosestPlayer(999) -- no range limit for TP mode
+        while cfg.knifeEnabled and cfg.knifeMode=="TpToPlayer" do
+            local target = GetClosestPlayer(999)
             if target and target.Character then
                 local char = lp.Character
                 local g = char and char:FindFirstChild("HumanoidRootPart")
                 local tg = target.Character:FindFirstChild("HumanoidRootPart")
                 if g and tg then
-                    -- TP slightly behind target
-                    g.CFrame = tg.CFrame * CFrame.new(0, 0, 2)
+                    g.CFrame = tg.CFrame * CFrame.new(0,0,2)
                     task.wait(0.05)
                     DoStab()
                 end
@@ -294,177 +688,38 @@ local function StartTpStab()
     end)
 end
 
-local function StartKnife()
-    if cfg.knifeMode == "AutoStab" then
-        StartAutoStab()
-    else
-        StartTpStab()
-    end
+function StartKnife()
+    if cfg.knifeMode=="AutoStab" then StartAutoStab()
+    else StartTpStab() end
 end
 
 -- ============================================================
--- // RAYFIELD WINDOW
+-- // MOBILE QUICK BUTTONS
 -- ============================================================
-local W = Rayfield:CreateWindow({
-    Name             = "💥 Flick Script v2",
-    Icon             = 0,
-    LoadingTitle     = "Flick Script v2",
-    LoadingSubtitle  = "Tracer Fixed + Knife",
-    Theme            = "Default",
-    DisableBuildWarnings = true,
-    ConfigurationSaving  = {Enabled=true, FolderName="FlickScript2", FileName="Config"},
-    KeySystem        = false,
-})
-
--- ── Tab: Tracer ───────────────────────────────────────────────
-local TabT = W:CreateTab("💥 Tracer", 4483345998)
-
-TabT:CreateSection("Your Bullets")
-TabT:CreateLabel("Color picker now affects YOUR bullets. Enemy bullets use game colors.")
-
-TabT:CreateToggle({Name="Enable Tracer", CurrentValue=true, Flag="TracerOn",
-    Callback=function(v) cfg.tracerEnabled=v; UpdateStatus() end})
-
-TabT:CreateColorPicker({Name="Your Tracer Color",
-    Color=Color3.fromRGB(0,100,255), Flag="TracerColor",
-    Callback=function(v) cfg.tracerColor=v end})
-
-TabT:CreateSection("Enemy Bullets")
-
-TabT:CreateToggle({Name="Use Enemy's Game Color", CurrentValue=false, Flag="GameColor",
-    Callback=function(v) cfg.useGameColor=v end})
-
-TabT:CreateSection("Style")
-
-TabT:CreateSlider({Name="Tracer Width", Range={2,20}, Increment=1,
-    Suffix="cm", CurrentValue=8, Flag="TracerWidth",
-    Callback=function(v) cfg.tracerWidth=v/100 end})
-
-TabT:CreateSlider({Name="Tracer Duration", Range={5,100}, Increment=5,
-    Suffix="ms", CurrentValue=25, Flag="TracerDuration",
-    Callback=function(v) cfg.tracerDuration=v/100 end})
-
-TabT:CreateDropdown({
-    Name="Tracer Material",
-    Options={"Neon","SmoothPlastic","Glass","ForceField"},
-    CurrentOption={"Neon"}, Flag="TracerMat",
-    Callback=function(opt) cfg.tracerMaterial=Enum.Material[opt[1]] end,
-})
-
--- ── Tab: Auto Reload ──────────────────────────────────────────
-local TabR = W:CreateTab("🔄 Reload", 4483345998)
-
-TabR:CreateToggle({Name="Enable Auto Reload", CurrentValue=true, Flag="AutoReload",
-    Callback=function(v) cfg.autoReload=v; UpdateStatus() end})
-
-TabR:CreateSlider({Name="Reload Delay After Shot", Range={0,50}, Increment=1,
-    Suffix="ms", CurrentValue=10, Flag="ReloadDelay",
-    Callback=function(v) cfg.reloadDelay=v/100 end})
-
-TabR:CreateButton({Name="🔄 Reload Now", Callback=function()
-    pcall(function() ReloadRemote:FireServer() end)
-    Notify("🔄","Reloaded!",2)
-end})
-
--- ── Tab: Knife ────────────────────────────────────────────────
-local TabK = W:CreateTab("🔪 Knife", 4483345998)
-
-TabK:CreateSection("Mode")
-
-TabK:CreateDropdown({
-    Name="Knife Mode",
-    Options={"AutoStab","TpToPlayer"},
-    CurrentOption={"AutoStab"}, Flag="KnifeMode",
-    Callback=function(opt)
-        cfg.knifeMode = opt[1]
-        if cfg.knifeEnabled then StartKnife() end
-    end,
-})
-
-TabK:CreateToggle({Name="Enable Knife Feature", CurrentValue=false, Flag="KnifeOn",
-    Callback=function(v)
-        cfg.knifeEnabled = v
-        UpdateStatus()
-        if v then StartKnife() else StopThread("knife") end
-    end})
-
-TabK:CreateSection("Speed — lower = faster (keep above 0.1 to avoid ban)")
-
-TabK:CreateSlider({
-    Name="Action Delay",
-    Range={10,100}, Increment=5, Suffix="ms", CurrentValue=30,
-    Flag="KnifeDelay",
-    Callback=function(v)
-        cfg.knifeDelay = v/100
-    end,
-})
-
-TabK:CreateSection("Range (AutoStab only)")
-
-TabK:CreateSlider({
-    Name="Stab Range",
-    Range={5,50}, Increment=5, Suffix=" studs", CurrentValue=20,
-    Flag="KnifeRange",
-    Callback=function(v) cfg.knifeRange = v end,
-})
-
-TabK:CreateButton({Name="🔪 Stab Once", Callback=function()
-    DoStab()
-    Notify("🔪","Stab fired!",2)
-end})
-
-TabK:CreateSection("TP to Player info")
-TabK:CreateLabel("TpToPlayer: teleports to closest enemy then stabs.")
-TabK:CreateLabel("Keep delay above 100ms to stay safe.")
-
--- ── Mobile ────────────────────────────────────────────────────
 if isMobile then
-    local btns = {
-        {lbl="💥", x=-90,  fn=function()
-            cfg.tracerEnabled = not cfg.tracerEnabled
-            UpdateStatus()
-            Notify("💥 Tracer", cfg.tracerEnabled and "ON" or "OFF", 2)
-        end},
-        {lbl="🔄", x=-165, fn=function()
-            cfg.autoReload = not cfg.autoReload
-            UpdateStatus()
-            Notify("🔄 Reload", cfg.autoReload and "ON" or "OFF", 2)
-        end},
-        {lbl="🔪", x=-240, fn=function()
-            cfg.knifeEnabled = not cfg.knifeEnabled
-            UpdateStatus()
+    local mbtns = {
+        {lbl="💥", x=-90,  fn=function() cfg.tracerEnabled=not cfg.tracerEnabled end},
+        {lbl="🔄", x=-160, fn=function() cfg.autoReload=not cfg.autoReload end},
+        {lbl="🔪", x=-230, fn=function()
+            cfg.knifeEnabled=not cfg.knifeEnabled
             if cfg.knifeEnabled then StartKnife() else StopThread("knife") end
-            Notify("🔪 Knife", cfg.knifeEnabled and "ON" or "OFF", 2)
         end},
     }
-    for _, b in ipairs(btns) do
-        local btn = Instance.new("TextButton")
-        btn.Size             = UDim2.new(0,60,0,60)
-        btn.Position         = UDim2.new(1,b.x,1,-85)
-        btn.BackgroundColor3 = Color3.fromRGB(30,30,30)
-        btn.BackgroundTransparency = 0.2
-        btn.Text             = b.lbl
-        btn.TextSize         = 26
-        btn.Font             = Enum.Font.GothamBold
-        btn.BorderSizePixel  = 0
-        btn.ZIndex           = 10
-        btn.Parent           = sg
-        Instance.new("UICorner",btn).CornerRadius = UDim.new(1,0)
-        btn.TouchTap:Connect(function()
-            b.fn()
-            ts:Create(btn,TweenInfo.new(0.08),{BackgroundTransparency=0.6}):Play()
-            task.delay(0.1,function()
-                ts:Create(btn,TweenInfo.new(0.1),{BackgroundTransparency=0.2}):Play()
-            end)
-        end)
+    for _, b in ipairs(mbtns) do
+        local mb = Instance.new("TextButton")
+        mb.Size=UDim2.new(0,55,0,55)
+        mb.Position=UDim2.new(1,b.x,1,-75)
+        mb.BackgroundColor3=COL_PANEL
+        mb.BackgroundTransparency=0.15
+        mb.Text=b.lbl
+        mb.TextSize=24
+        mb.Font=Enum.Font.GothamBold
+        mb.BorderSizePixel=0
+        mb.ZIndex=10
+        mb.Parent=sg
+        Instance.new("UICorner",mb).CornerRadius=UDim.new(1,0)
+        mb.TouchTap:Connect(b.fn)
     end
 end
 
--- ============================================================
--- // Ready
--- ============================================================
-UpdateStatus()
-Notify("💥 Flick Script v2",
-    "Tracer fixed! Your bullets now use your color. Shoot to test.",
-    5)
-print("[FlickScript v2] Loaded")
+print("[FlickScript v3] Loaded — No external UI library needed")
