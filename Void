@@ -1,716 +1,283 @@
--- Rivals Standalone Ragebot v1
--- 100% Hitrate | Undetectable | All Weapons
--- No visual POV movement
--- UI: LinoriaLib
+-- // Flick — Bullet Tracer + Auto Reload
+-- // Uses ProjectileRender remote for tracer data
+-- // Rayfield UI + Mobile Support
 
--- =============================================
--- SERVICES
--- =============================================
-local cloneref = cloneref or function(o) return o end
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
-local RunService        = cloneref(game:GetService("RunService"))
-local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
-local Players           = cloneref(game:GetService("Players"))
-local UIS               = cloneref(game:GetService("UserInputService"))
-local TweenService      = cloneref(game:GetService("TweenService"))
+-- Services
+local p  = game:GetService("Players")
+local rs = game:GetService("ReplicatedStorage")
+local lp = p.LocalPlayer
+local isMobile = game:GetService("UserInputService").TouchEnabled
 
-local LocalPlayer = Players.LocalPlayer
-local Workspace   = cloneref(game:GetService("Workspace"))
+-- Remotes
+local ClientRemotes   = lp:WaitForChild("ClientRemotes")
+local GunRemote       = rs:WaitForChild("ModuleScripts"):WaitForChild("GunModules"):WaitForChild("Remote")
 
--- =============================================
--- LIBRARY
--- =============================================
-local repo    = "https://raw.githubusercontent.com/mstudio45/LinoriaLib/main/"
-local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
-local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
-local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+local ReloadRemote    = ClientRemotes:WaitForChild("Reload")
+local ProjectileRender    = GunRemote:WaitForChild("ProjectileRender")
+local ProjectileFinished  = GunRemote:WaitForChild("ProjectileFinished")
+local CheckFire           = ClientRemotes:WaitForChild("CheckFire")
 
-local Window = Library:CreateWindow({
-    Title                = "Rivals Ragebot",
-    Center               = true,
-    AutoShow             = true,
-    Resizable            = true,
-    ShowCustomCursor     = false,
-    UnlockMouseWhileOpen = true,
-    NotifySide           = "Left",
-    TabPadding           = 8,
-    MenuFadeTime         = 0.2,
-    Size                 = UDim2.fromOffset(480, 560),
-})
+-- ============================================================
+-- // Config
+-- ============================================================
+local cfg = {
+    -- Tracer
+    tracerEnabled   = true,
+    tracerColor     = Color3.fromRGB(0, 255, 200),
+    tracerWidth     = 0.08,
+    tracerDuration  = 0.25,
+    tracerMaterial  = Enum.Material.Neon,
+    useGameColor    = true,   -- use LaserColor from the game's own data
 
-local Tabs = {
-    Ragebot    = Window:AddTab("Ragebot"),
-    Targeting  = Window:AddTab("Targeting"),
-    Weapons    = Window:AddTab("Weapons"),
-    UISettings = Window:AddTab("UI Settings"),
+    -- Auto Reload
+    autoReload      = true,
+    reloadDelay     = 0.1,   -- seconds after shot before reloading
 }
 
--- =============================================
--- CONFIG
--- =============================================
-local Config = {
-    -- Core
-    Enabled      = false,
-    FOV          = 360,
-    TargetPart   = "Head",
-    TeamCheck    = true,
-    VisibleCheck = false,
-    Wallbang     = true,
+-- ============================================================
+-- // GUI
+-- ============================================================
+local sg = Instance.new("ScreenGui")
+sg.Name = "FlickScript"
+sg.ResetOnSpawn = false
+sg.IgnoreGuiInset = true
+sg.DisplayOrder = 100
+sg.Parent = lp.PlayerGui
 
-    -- Timing
-    FireDelay    = 70,
-    BurstDelay   = 60,
-    BurstCount   = 1,
+-- Status label
+local status = Instance.new("TextLabel")
+status.BackgroundColor3       = Color3.fromRGB(0,0,0)
+status.BackgroundTransparency = 0.4
+status.Size                   = UDim2.new(0,200,0,32)
+status.AnchorPoint            = Vector2.new(0.5,0)
+status.Position               = UDim2.new(0.5,0,0,10)
+status.TextColor3             = Color3.fromRGB(0,255,200)
+status.TextSize               = 13
+status.Font                   = Enum.Font.GothamBold
+status.Text                   = "💥 Tracer: ON  🔄 Reload: ON"
+status.BorderSizePixel        = 0
+status.Parent                 = sg
+Instance.new("UICorner", status).CornerRadius = UDim.new(0,6)
 
-    -- Auto actions
-    AutoReload   = true,
-    AutoSwitch   = false,
+local function UpdateStatus()
+    local t = cfg.tracerEnabled and "ON" or "OFF"
+    local r = cfg.autoReload    and "ON" or "OFF"
+    status.Text       = string.format("💥 Tracer: %s  🔄 Reload: %s", t, r)
+    status.TextColor3 = cfg.tracerEnabled
+        and Color3.fromRGB(0,255,200)
+        or  Color3.fromRGB(255,80,80)
+end
 
-    -- Teleport
-    TeleportMode = "Point Blank",  -- "Point Blank" | "Behind" | "Above"
-    TeleportDist = 1.2,
+-- ============================================================
+-- // BULLET TRACER
+-- // Hooks ProjectileRender — fires every time a bullet is shot
+-- // Data has Origin (barrel) and Endpoint (where bullet goes)
+-- ============================================================
+local function DrawTracer(origin, endpoint, color)
+    local c = cfg.useGameColor and color or cfg.tracerColor
+    local dist = (endpoint - origin).Magnitude
+    if dist < 0.1 then return end
 
-    -- Weapons
-    WeaponBlacklist = {
-        -- user can toggle these off
-        Sniper    = false,
-        Bow       = false,
-        RPG       = false,
-        Crossbow  = false,
-        Dagger    = false,
-        Katana    = false,
-        BattleAxe = false,
-        Grenade   = false,
-    },
+    local mid = (origin + endpoint) / 2
+    local look = CFrame.new(origin, endpoint)
 
-    -- Visual
-    DrawFOV      = false,
-    FOVColor     = Color3.fromRGB(255, 80, 80),
-    HitEffect    = true,
-    HitColor     = Color3.fromRGB(255, 20, 147),
-}
+    local beam = Instance.new("Part")
+    beam.Anchored     = true
+    beam.CanCollide   = false
+    beam.CastShadow   = false
+    beam.Material     = cfg.tracerMaterial
+    beam.Color        = c
+    beam.Size         = Vector3.new(cfg.tracerWidth, cfg.tracerWidth, dist)
+    beam.CFrame       = look * CFrame.new(0, 0, -dist/2)
+    beam.Parent       = workspace
 
--- =============================================
--- MODULES
--- =============================================
-local Util            = nil
-local EnumLib         = nil
-local FighterCtrl     = nil
-local UseItemRemote   = nil
-local modulesOK       = false
+    -- Fade out and destroy
+    local startT  = 0
+    local conn
+    conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
+        startT = startT + dt
+        local alpha = startT / cfg.tracerDuration
+        beam.Transparency = alpha
+        if alpha >= 1 then
+            conn:Disconnect()
+            beam:Destroy()
+        end
+    end)
+end
 
-pcall(function()
-    Util        = require(ReplicatedStorage.Modules.Utility)
-    EnumLib     = require(ReplicatedStorage.Modules.EnumLibrary)
-    FighterCtrl = require(LocalPlayer.PlayerScripts.Controllers.FighterController)
-    UseItemRemote = ReplicatedStorage.Remotes.Replication.Fighter.UseItem
-    modulesOK   = true
+-- Hook into ProjectileRender (server fires this when a bullet is created)
+ProjectileRender.OnClientEvent:Connect(function(data)
+    if not cfg.tracerEnabled then return end
+    if type(data) ~= "table" then return end
+
+    local origin   = data.Origin
+    local endpoint = data.Endpoint
+    local color    = data.LaserColor or cfg.tracerColor
+
+    if origin and endpoint then
+        DrawTracer(
+            Vector3.new(origin.X, origin.Y, origin.Z),
+            Vector3.new(endpoint.X, endpoint.Y, endpoint.Z),
+            color
+        )
+    end
 end)
 
--- =============================================
--- TARGET PART PRESETS
--- =============================================
-local PART_PRESETS = {
-    ["Head"]       = {"Head"},
-    ["HRP"]        = {"HumanoidRootPart"},
-    ["Torso"]      = {"UpperTorso","LowerTorso","HumanoidRootPart"},
-    ["Head, Body"] = {"Head","UpperTorso","LowerTorso","HumanoidRootPart"},
-    ["Random"]     = {"Head","UpperTorso","LowerTorso","LeftUpperArm","RightUpperArm"},
-}
+-- Also hook ProjectileFinished for impact flash
+ProjectileFinished.OnClientEvent:Connect(function(data)
+    if not cfg.tracerEnabled then return end
+    if type(data) ~= "table" then return end
 
-local function getBestPart(model, setting)
-    local preset = PART_PRESETS[setting] or {"Head"}
-    if setting == "Random" then
-        local pool = {}
-        for _, n in ipairs(preset) do
-            local p = model:FindFirstChild(n)
-            if p then table.insert(pool, p) end
-        end
-        return #pool > 0 and pool[math.random(1, #pool)] or nil
-    end
-    for _, n in ipairs(preset) do
-        local p = model:FindFirstChild(n)
-        if p then return p end
-    end
-    return nil
-end
+    local hitPos = data.CFrame and data.CFrame.Position
+    if not hitPos then return end
 
--- =============================================
--- UTILITIES
--- =============================================
-local function isSameTeam(p)
-    local my    = LocalPlayer:GetAttribute("TeamID")
-    local their = p:GetAttribute("TeamID")
-    if my ~= nil and their ~= nil then return my == their end
-    return LocalPlayer.Team ~= nil
-        and p.Team ~= nil
-        and LocalPlayer.Team == p.Team
-end
+    -- Small impact sphere flash
+    local flash = Instance.new("Part")
+    flash.Anchored     = true
+    flash.CanCollide   = false
+    flash.CastShadow   = false
+    flash.Material     = Enum.Material.Neon
+    flash.Color        = data.ExpColor or data.LaserColor or cfg.tracerColor
+    flash.Shape        = Enum.PartType.Ball
+    flash.Size         = Vector3.one * 0.5
+    flash.Position     = hitPos
+    flash.Parent       = workspace
 
-local function isAlive(fighter)
-    if not fighter then return false end
-    local ok, alive = pcall(function()
-        return fighter.State and fighter.State:IsAliveCached()
+    local elapsed = 0
+    local conn
+    conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
+        elapsed = elapsed + dt
+        local a = elapsed / 0.15
+        flash.Transparency = a
+        flash.Size = Vector3.one * (0.5 + a * 0.5)
+        if a >= 1 then conn:Disconnect(); flash:Destroy() end
     end)
-    return ok and alive
-end
+end)
 
-local visParams = RaycastParams.new()
-visParams.FilterType = Enum.RaycastFilterType.Exclude
-
-local function isVisible(origin, targetPart)
-    pcall(function()
-        visParams.FilterDescendantsInstances = {
-            LocalPlayer.Character,
-            targetPart.Parent,
-        }
-    end)
-    local dir = targetPart.Position - origin
-    local hit = Workspace:Raycast(origin, dir.Unit * dir.Magnitude * 0.95, visParams)
-    return not hit or hit.Instance:IsDescendantOf(targetPart.Parent)
-end
-
-local function isWeaponBlacklisted(itemName)
-    if not itemName then return false end
-    for key, blacklisted in pairs(Config.WeaponBlacklist) do
-        if blacklisted and itemName:lower():find(key:lower()) then
-            return true
-        end
-    end
-    return false
-end
-
--- =============================================
--- FOV CIRCLE
--- =============================================
-local fovCircle = Drawing.new("Circle")
-fovCircle.NumSides     = 64
-fovCircle.Filled       = false
-fovCircle.Visible      = false
-fovCircle.Thickness    = 1.5
-fovCircle.Transparency = 0.8
-fovCircle.Color        = Config.FOVColor
-
--- =============================================
--- HIT EFFECT
--- =============================================
-local hitGui = Instance.new("ScreenGui")
-hitGui.Name           = "RagebotHitFX"
-hitGui.ResetOnSpawn   = false
-hitGui.IgnoreGuiInset = true
-hitGui.Parent         = LocalPlayer:WaitForChild("PlayerGui")
-
-local function showHitEffect()
-    if not Config.HitEffect then return end
-    local frame = Instance.new("Frame")
-    frame.Size                  = UDim2.fromScale(1, 1)
-    frame.BackgroundColor3      = Config.HitColor
-    frame.BackgroundTransparency = 0.85
-    frame.BorderSizePixel       = 0
-    frame.Parent                = hitGui
-    TweenService:Create(frame, TweenInfo.new(0.25), {
-        BackgroundTransparency = 1
-    }):Play()
-    task.delay(0.3, function() frame:Destroy() end)
-end
-
--- =============================================
--- TARGET SELECTION
--- =============================================
-local function getBestTarget()
-    local camera = Workspace.CurrentCamera
-    if not FighterCtrl then return nil end
-
-    local myFighter = nil
-    pcall(function() myFighter = FighterCtrl.LocalFighter end)
-    if not myFighter or not isAlive(myFighter) then return nil end
-
-    local myRoot = nil
-    pcall(function() myRoot = myFighter.RootPart end)
-    if not myRoot then return nil end
-
-    local best    = nil
-    local bestDist = Config.FOV == 360 and math.huge or Config.FOV
-
-    local fighters = {}
-    pcall(function()
-        for _, f in pairs(FighterCtrl.Fighters) do
-            table.insert(fighters, f)
-        end
-    end)
-
-    for _, fighter in ipairs(fighters) do
-        local ok = pcall(function()
-            if fighter.Player == LocalPlayer then return end
-            if not isAlive(fighter) then return end
-            if Config.TeamCheck and isSameTeam(fighter.Player) then return end
-
-            local itemName = nil
-            pcall(function()
-                local item = fighter.EquippedItem
-                if item then itemName = item.Name end
-            end)
-
-            local model = fighter.Model
-            if not model then return end
-
-            local part = getBestPart(model, Config.TargetPart)
-            if not part then return end
-
-            if Config.VisibleCheck and not isVisible(myRoot.Position, part) then return end
-
-            local dist
-            if Config.FOV == 360 then
-                -- Use world distance when FOV is 360
-                dist = (myRoot.Position - part.Position).Magnitude
-            else
-                -- Use screen distance
-                local sp, onScreen = camera:WorldToScreenPoint(part.Position)
-                if not onScreen then return end
-                dist = (Vector2.new(sp.X, sp.Y) - camera.ViewportSize / 2).Magnitude
-            end
-
-            if dist < bestDist then
-                bestDist = dist
-                best = {part = part, fighter = fighter}
-            end
+-- ============================================================
+-- // AUTO RELOAD
+-- // Hooks CheckFire (fires every shot) → delays → fires Reload
+-- ============================================================
+CheckFire.OnClientEvent:Connect(function()
+    if not cfg.autoReload then return end
+    task.delay(cfg.reloadDelay, function()
+        pcall(function()
+            ReloadRemote:FireServer()
         end)
-    end
-
-    return best
-end
-
--- =============================================
--- TELEPORT HELPERS
--- =============================================
-local function getTeleportCFrame(targetPart, myRoot)
-    local mode = Config.TeleportMode
-    local dist = Config.TeleportDist
-
-    if mode == "Point Blank" then
-        -- 1 stud directly infront of target facing them
-        return CFrame.lookAt(
-            targetPart.Position + targetPart.CFrame.LookVector * dist,
-            targetPart.Position
-        )
-    elseif mode == "Behind" then
-        -- Behind the target
-        return CFrame.lookAt(
-            targetPart.Position - targetPart.CFrame.LookVector * dist,
-            targetPart.Position
-        )
-    elseif mode == "Above" then
-        -- Directly above
-        return CFrame.lookAt(
-            targetPart.Position + Vector3.new(0, dist, 0),
-            targetPart.Position
-        )
-    end
-
-    return CFrame.lookAt(
-        targetPart.Position + targetPart.CFrame.LookVector * dist,
-        targetPart.Position
-    )
-end
-
--- =============================================
--- RAGEBOT CORE
--- =============================================
-local lastShot  = 0
-local busy      = false
-local shotCount = 0
-
-RunService.Heartbeat:Connect(function()
-    -- FOV circle update
-    local camera = Workspace.CurrentCamera
-    if camera then
-        fovCircle.Position = camera.ViewportSize / 2
-        fovCircle.Radius   = Config.FOV == 360 and 0 or Config.FOV
-        fovCircle.Visible  = Config.DrawFOV and Config.Enabled and Config.FOV ~= 360
-        fovCircle.Color    = Config.FOVColor
-    end
-
-    if not Config.Enabled then return end
-    if not modulesOK then return end
-    if busy then return end
-
-    -- Get our fighter
-    local myFighter = nil
-    pcall(function() myFighter = FighterCtrl.LocalFighter end)
-    if not myFighter or not isAlive(myFighter) then return end
-
-    -- Get equipped item
-    local item = nil
-    pcall(function() item = myFighter.EquippedItem end)
-    if not item then return end
-
-    -- Check weapon blacklist
-    local itemName = nil
-    pcall(function() itemName = item.Name end)
-    if isWeaponBlacklisted(itemName) then return end
-
-    -- Get ObjectID
-    local objectID = nil
-    pcall(function() objectID = item:Get("ObjectID") end)
-    if not objectID then return end
-
-    -- Check ammo
-    local ammo = nil
-    pcall(function() ammo = item:Get("CurrentAmmo") end)
-    if ammo ~= nil and ammo <= 0 then
-        if Config.AutoReload then
-            pcall(function()
-                UseItemRemote:FireServer(
-                    objectID,
-                    EnumLib:ToEnum("Reload"),
-                    {}
-                )
-            end)
-        end
-        return
-    end
-
-    -- Fire delay
-    local now = tick() * 1000
-    if now - lastShot < Config.FireDelay then return end
-    lastShot = now
-
-    -- Find target
-    local result = getBestTarget()
-    if not result then return end
-
-    local targetPart    = result.part
-    local targetFighter = result.fighter
-
-    -- Get our root
-    local myRoot = nil
-    pcall(function() myRoot = myFighter.RootPart end)
-    if not myRoot then return end
-
-    busy = true
-
-    task.spawn(function()
-        local originalCF = myRoot.CFrame
-
-        -- Teleport us to fire position
-        local fireCF = getTeleportCFrame(targetPart, myRoot)
-        pcall(function() myRoot.CFrame = fireCF end)
-
-        -- Small yield so physics registers
-        task.wait(0.016)
-
-        -- Burst fire
-        for i = 1, Config.BurstCount do
-            if not Config.Enabled then break end
-
-            -- Re-grab part in case they moved
-            local part = targetPart
-            if not part or not part.Parent then break end
-
-            local aimCF = CFrame.lookAt(fireCF.Position, part.Position)
-
-            local shotData = {}
-            local ok = pcall(function()
-                shotData[utf8.char(1)] = {
-                    [utf8.char(0)] = Util:EncodeCFrame(aimCF),
-                    [utf8.char(1)] = Util:EncodeCFrame(part.CFrame),
-                    [utf8.char(2)] = part,
-                    [utf8.char(3)] = Util:EncodeCFrame(
-                        part.CFrame:ToObjectSpace(CFrame.new(part.Position))
-                    ),
-                }
-            end)
-
-            if ok then
-                pcall(function()
-                    UseItemRemote:FireServer(
-                        objectID,
-                        EnumLib:ToEnum("StartShooting"),
-                        shotData,
-                        nil
-                    )
-                end)
-
-                task.wait(0.06)
-
-                pcall(function()
-                    UseItemRemote:FireServer(
-                        objectID,
-                        EnumLib:ToEnum("StopShooting"),
-                        {},
-                        nil
-                    )
-                end)
-
-                showHitEffect()
-            end
-
-            if i < Config.BurstCount then
-                task.wait(Config.BurstDelay / 1000)
-            end
-        end
-
-        -- Teleport back instantly
-        pcall(function() myRoot.CFrame = originalCF end)
-
-        busy = false
     end)
 end)
 
--- =============================================
--- ═══════════════ UI ═════════════════════════
--- =============================================
-
--- RAGEBOT TAB
-local RB_Main   = Tabs.Ragebot:AddLeftGroupbox("Ragebot")
-local RB_Timing = Tabs.Ragebot:AddRightGroupbox("Timing")
-local RB_Tele   = Tabs.Ragebot:AddRightGroupbox("Teleport")
-local RB_FX     = Tabs.Ragebot:AddLeftGroupbox("Effects")
-local RB_Status = Tabs.Ragebot:AddLeftGroupbox("Status")
-
--- ── Main ──
-RB_Main:AddLabel("Modules: " .. (modulesOK and "✓ OK" or "✗ FAILED"))
-RB_Main:AddLabel("")
-
-RB_Main:AddToggle("RBEnabled", {
-    Text    = "Enable Ragebot",
-    Default = false,
-    Callback = function(v)
-        Config.Enabled = v
-        Library:Notify(v and "Ragebot ON" or "Ragebot OFF", 2)
-    end
-})
-
-RB_Main:AddKeybind("RBToggleBind", {
-    Text    = "Toggle Keybind",
-    Default = "RightAlt",
-    Callback = function()
-        Config.Enabled = not Config.Enabled
-        Library:Notify("Ragebot: " .. (Config.Enabled and "ON" or "OFF"), 2)
-    end
-})
-
-RB_Main:AddToggle("RBAutoReload", {
-    Text    = "Auto Reload",
-    Default = true,
-    Callback = function(v) Config.AutoReload = v end
-})
-
-RB_Main:AddToggle("RBWallbang", {
-    Text    = "Wallbang (ignore walls)",
-    Default = true,
-    Callback = function(v)
-        Config.Wallbang = v
-        Config.VisibleCheck = not v
-    end
-})
-
--- ── Timing ──
-RB_Timing:AddSlider("RBFireDelay", {
-    Text     = "Fire Delay (ms)",
-    Default  = 70,
-    Min      = 0,
-    Max      = 500,
-    Rounding = 0,
-    Suffix   = " ms",
-    Callback = function(v) Config.FireDelay = v end
-})
-
-RB_Timing:AddSlider("RBBurstCount", {
-    Text     = "Burst Count",
-    Default  = 1,
-    Min      = 1,
-    Max      = 5,
-    Rounding = 0,
-    Suffix   = "x",
-    Callback = function(v) Config.BurstCount = v end
-})
-
-RB_Timing:AddSlider("RBBurstDelay", {
-    Text     = "Burst Delay (ms)",
-    Default  = 60,
-    Min      = 0,
-    Max      = 300,
-    Rounding = 0,
-    Suffix   = " ms",
-    Callback = function(v) Config.BurstDelay = v end
-})
-
--- ── Teleport ──
-RB_Tele:AddLabel("Where we teleport before firing")
-RB_Tele:AddLabel("Invisible to you and enemy")
-RB_Tele:AddLabel("")
-
-RB_Tele:AddDropdown("RBTeleMode", {
-    Text    = "Teleport Mode",
-    Default = "Point Blank",
-    Values  = {"Point Blank", "Behind", "Above"},
-    Callback = function(v) Config.TeleportMode = v end
-})
-
-RB_Tele:AddSlider("RBTeleDist", {
-    Text     = "Teleport Distance",
-    Default  = 12,
-    Min      = 5,
-    Max      = 50,
-    Rounding = 1,
-    Suffix   = " units",
-    Callback = function(v) Config.TeleportDist = v / 10 end
-})
-
--- ── Effects ──
-RB_FX:AddToggle("RBDrawFOV", {
-    Text    = "Draw FOV Circle",
-    Default = false,
-    Callback = function(v)
-        Config.DrawFOV = v
-        fovCircle.Visible = v and Config.Enabled and Config.FOV ~= 360
-    end
-})
-
-RB_FX:AddLabel("FOV Color"):AddColorPicker("RBFOVColor", {
-    Default  = Color3.fromRGB(255, 80, 80),
-    Callback = function(v)
-        Config.FOVColor = v
-        fovCircle.Color = v
-    end
-})
-
-RB_FX:AddToggle("RBHitEffect", {
-    Text    = "Screen Flash on Hit",
-    Default = true,
-    Callback = function(v) Config.HitEffect = v end
-})
-
-RB_FX:AddLabel("Flash Color"):AddColorPicker("RBHitColor", {
-    Default  = Color3.fromRGB(255, 20, 147),
-    Callback = function(v) Config.HitColor = v end
-})
-
--- ── Status ──
-RB_Status:AddLabel("Toggle:  Right Alt (rebindable)")
-RB_Status:AddLabel("Method:  Client-side self-teleport")
-RB_Status:AddLabel("Effect:  Invisible to you and enemy")
-RB_Status:AddLabel("Server:  Sees point blank shot = 100% hit")
-
--- =============================================
--- TARGETING TAB
--- =============================================
-local TG_Main = Tabs.Targeting:AddLeftGroupbox("Targeting")
-local TG_FOV  = Tabs.Targeting:AddRightGroupbox("FOV")
-
--- ── Main ──
-TG_Main:AddDropdown("TGPart", {
-    Text    = "Target Part",
-    Default = "Head",
-    Values  = {"Head", "HRP", "Torso", "Head, Body", "Random"},
-    Callback = function(v) Config.TargetPart = v end
-})
-
-TG_Main:AddToggle("TGTeamCheck", {
-    Text    = "Team Check",
-    Default = true,
-    Callback = function(v) Config.TeamCheck = v end
-})
-
-TG_Main:AddToggle("TGVisCheck", {
-    Text    = "Visible Check (disables wallbang)",
-    Default = false,
-    Callback = function(v)
-        Config.VisibleCheck = v
-        Config.Wallbang     = not v
-    end
-})
-
--- ── FOV ──
-TG_FOV:AddLabel("360 = full world, no circle drawn")
-TG_FOV:AddLabel("")
-
-TG_FOV:AddSlider("TGFOVSize", {
-    Text     = "FOV Size (px)",
-    Default  = 360,
-    Min      = 10,
-    Max      = 360,
-    Rounding = 0,
-    Suffix   = " px",
-    Callback = function(v)
-        Config.FOV = v
-        fovCircle.Radius  = v
-        fovCircle.Visible = Config.DrawFOV and Config.Enabled and v ~= 360
-    end
-})
-
-TG_FOV:AddLabel("")
-TG_FOV:AddLabel("At 360px: targets anywhere on screen")
-TG_FOV:AddLabel("At 100px: targets near crosshair only")
-
--- =============================================
--- WEAPONS TAB
--- =============================================
-local WP_Black = Tabs.Weapons:AddLeftGroupbox("Weapon Blacklist")
-local WP_Info  = Tabs.Weapons:AddRightGroupbox("Info")
-
-WP_Black:AddLabel("Toggle OFF to SKIP that weapon")
-WP_Black:AddLabel("")
-
-local weaponList = {
-    {"Sniper",    "Sniper Rifle"},
-    {"Bow",       "Bow"},
-    {"RPG",       "RPG"},
-    {"Crossbow",  "Crossbow"},
-    {"Dagger",    "Dagger"},
-    {"Katana",    "Katana"},
-    {"BattleAxe", "Battle Axe"},
-    {"Grenade",   "Grenade"},
-}
-
-for _, entry in ipairs(weaponList) do
-    local key, label = entry[1], entry[2]
-    WP_Black:AddToggle("WB_" .. key, {
-        Text    = "Skip " .. label,
-        Default = false,
-        Callback = function(v)
-            Config.WeaponBlacklist[key] = v
+-- Also fire reload on a loop as backup (every 0.5s when enabled)
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if cfg.autoReload then
+            pcall(function()
+                ReloadRemote:FireServer()
+            end)
         end
-    })
+    end
+end)
+
+-- ============================================================
+-- // RAYFIELD UI
+-- ============================================================
+local W = Rayfield:CreateWindow({
+    Name             = "💥 Flick Script",
+    Icon             = 0,
+    LoadingTitle     = "Flick Script",
+    LoadingSubtitle  = "Tracer + Auto Reload",
+    Theme            = "Default",
+    DisableBuildWarnings = true,
+    ConfigurationSaving  = {Enabled=true, FolderName="FlickScript", FileName="Config"},
+    KeySystem        = false,
+})
+
+-- ── Tab: Tracer ───────────────────────────────────────────────
+local TabT = W:CreateTab("💥 Tracer", 4483345998)
+
+TabT:CreateToggle({Name="Enable Tracer", CurrentValue=true, Flag="TracerOn",
+    Callback=function(v) cfg.tracerEnabled=v; UpdateStatus() end})
+
+TabT:CreateToggle({Name="Use Game's Laser Color", CurrentValue=true, Flag="GameColor",
+    Callback=function(v) cfg.useGameColor=v end})
+
+TabT:CreateColorPicker({Name="Custom Tracer Color",
+    Color=Color3.fromRGB(0,255,200), Flag="TracerColor",
+    Callback=function(v) cfg.tracerColor=v end})
+
+TabT:CreateSlider({Name="Tracer Width", Range={1,20}, Increment=1,
+    Suffix="cm", CurrentValue=8, Flag="TracerWidth",
+    Callback=function(v) cfg.tracerWidth=v/100 end})
+
+TabT:CreateSlider({Name="Tracer Duration", Range={5,100}, Increment=5,
+    Suffix="ms", CurrentValue=25, Flag="TracerDuration",
+    Callback=function(v) cfg.tracerDuration=v/100 end})
+
+TabT:CreateDropdown({
+    Name = "Tracer Material",
+    Options = {"Neon", "SmoothPlastic", "Glass", "ForceField"},
+    CurrentOption = {"Neon"},
+    Flag = "TracerMat",
+    Callback = function(opt)
+        cfg.tracerMaterial = Enum.Material[opt[1]]
+    end,
+})
+
+TabT:CreateSection("Impact Flash")
+TabT:CreateLabel("Impact flash uses the game's ExpColor automatically.")
+
+-- ── Tab: Auto Reload ─────────────────────────────────────────
+local TabR = W:CreateTab("🔄 Auto Reload", 4483345998)
+
+TabR:CreateToggle({Name="Enable Auto Reload", CurrentValue=true, Flag="AutoReload",
+    Callback=function(v) cfg.autoReload=v; UpdateStatus() end})
+
+TabR:CreateSlider({Name="Reload Delay After Shot", Range={0,20}, Increment=1,
+    Suffix="ms", CurrentValue=1, Flag="ReloadDelay",
+    Callback=function(v) cfg.reloadDelay=v/100 end})
+
+TabR:CreateSection("Manual")
+TabR:CreateButton({Name="🔄 Reload Now", Callback=function()
+    pcall(function() ReloadRemote:FireServer() end)
+    Rayfield:Notify({Title="🔄 Reloaded", Content="Manual reload fired!", Duration=2})
+end})
+
+-- ── Tab: Mobile ───────────────────────────────────────────────
+if isMobile then
+    -- Quick toggle button for tracer
+    local btn = Instance.new("TextButton")
+    btn.Size             = UDim2.new(0,65,0,65)
+    btn.Position         = UDim2.new(1,-80,1,-90)
+    btn.BackgroundColor3 = Color3.fromRGB(0,200,150)
+    btn.BackgroundTransparency = 0.2
+    btn.Text             = "💥"
+    btn.TextSize         = 28
+    btn.Font             = Enum.Font.GothamBold
+    btn.BorderSizePixel  = 0
+    btn.ZIndex           = 10
+    btn.Parent           = sg
+    Instance.new("UICorner",btn).CornerRadius = UDim.new(1,0)
+
+    btn.TouchTap:Connect(function()
+        cfg.tracerEnabled = not cfg.tracerEnabled
+        btn.BackgroundColor3 = cfg.tracerEnabled
+            and Color3.fromRGB(0,200,150)
+            or  Color3.fromRGB(200,50,50)
+        UpdateStatus()
+    end)
 end
 
-WP_Info:AddLabel("How weapon blacklist works:")
-WP_Info:AddLabel("")
-WP_Info:AddLabel("Toggled ON = skip that weapon")
-WP_Info:AddLabel("Toggled OFF = ragebot works on it")
-WP_Info:AddLabel("")
-WP_Info:AddLabel("All weapons supported:")
-WP_Info:AddLabel("✓ Guns (all)")
-WP_Info:AddLabel("✓ Sniper")
-WP_Info:AddLabel("✓ Bow / Crossbow")
-WP_Info:AddLabel("✓ Melee (Dagger, Katana, Axe)")
-WP_Info:AddLabel("✓ Grenade")
-WP_Info:AddLabel("✓ RPG")
-WP_Info:AddLabel("")
-WP_Info:AddLabel("For melee: use Burst 1-2")
-WP_Info:AddLabel("For sniper: use Burst 1")
-WP_Info:AddLabel("For guns: use Burst 1-3")
+-- ============================================================
+-- // Ready
+-- ============================================================
+UpdateStatus()
+Rayfield:Notify({
+    Title   = "💥 Flick Script",
+    Content = "Tracer + Auto Reload loaded! Shoot to see tracers.",
+    Duration = 5,
+})
 
--- =============================================
--- UI SETTINGS TAB
--- =============================================
-ThemeManager:SetLibrary(Library)
-SaveManager:SetLibrary(Library)
-SaveManager:IgnoreThemeSettings()
-SaveManager:SetIgnoreIndexes({})
-ThemeManager:SetFolder("RivalsRagebot")
-SaveManager:SetFolder("RivalsRagebot")
-SaveManager:BuildConfigSection(Tabs.UISettings)
-ThemeManager:ApplyToTab(Tabs.UISettings)
-SaveManager:LoadAutoloadConfig()
-
--- =============================================
--- DONE
--- =============================================
-Library:Notify("Rivals Ragebot Loaded", 4)
-Library:Notify("Toggle: Right Alt", 3)
-
-print("[+] Rivals Ragebot v1 Loaded")
-print("[!] Toggle: Right Alt (rebindable in UI)")
-print("[!] Modules: " .. (modulesOK and "OK" or "FAILED - check game version"))
+print("[FlickScript] Loaded")
