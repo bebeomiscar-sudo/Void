@@ -1,40 +1,56 @@
--- // Flick — Bullet Tracer + Auto Reload
--- // Uses ProjectileRender remote for tracer data
+-- // Flick Script v2 — Fixed Local Tracer + Knife Features
 -- // Rayfield UI + Mobile Support
 
 local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
 
 -- Services
-local p  = game:GetService("Players")
-local rs = game:GetService("ReplicatedStorage")
-local lp = p.LocalPlayer
-local isMobile = game:GetService("UserInputService").TouchEnabled
+local p   = game:GetService("Players")
+local rs  = game:GetService("ReplicatedStorage")
+local run = game:GetService("RunService")
+local uis = game:GetService("UserInputService")
+local ts  = game:GetService("TweenService")
+local lp  = p.LocalPlayer
+local isMobile = uis.TouchEnabled
 
 -- Remotes
-local ClientRemotes   = lp:WaitForChild("ClientRemotes")
-local GunRemote       = rs:WaitForChild("ModuleScripts"):WaitForChild("GunModules"):WaitForChild("Remote")
+local ClientRemotes  = lp:WaitForChild("ClientRemotes")
+local GunRemote      = rs:WaitForChild("ModuleScripts"):WaitForChild("GunModules"):WaitForChild("Remote")
 
-local ReloadRemote    = ClientRemotes:WaitForChild("Reload")
-local ProjectileRender    = GunRemote:WaitForChild("ProjectileRender")
-local ProjectileFinished  = GunRemote:WaitForChild("ProjectileFinished")
-local CheckFire           = ClientRemotes:WaitForChild("CheckFire")
+local ReloadRemote       = ClientRemotes:WaitForChild("Reload")
+local CheckFire          = ClientRemotes:WaitForChild("CheckFire")
+local CheckShot          = ClientRemotes:WaitForChild("CheckShot")
+local ProjectileRender   = GunRemote:WaitForChild("ProjectileRender")
+local ProjectileFinished = GunRemote:WaitForChild("ProjectileFinished")
+local ConnectM6D         = GunRemote:WaitForChild("ConnectM6D")
 
 -- ============================================================
 -- // Config
 -- ============================================================
 local cfg = {
-    -- Tracer
-    tracerEnabled   = true,
-    tracerColor     = Color3.fromRGB(0, 255, 200),
-    tracerWidth     = 0.08,
-    tracerDuration  = 0.25,
-    tracerMaterial  = Enum.Material.Neon,
-    useGameColor    = true,   -- use LaserColor from the game's own data
+    tracerEnabled  = true,
+    tracerColor    = Color3.fromRGB(0, 100, 255),
+    useGameColor   = false,  -- OFF by default so YOUR color shows
+    tracerWidth    = 0.08,
+    tracerDuration = 0.25,
+    tracerMaterial = Enum.Material.Neon,
 
-    -- Auto Reload
-    autoReload      = true,
-    reloadDelay     = 0.1,   -- seconds after shot before reloading
+    autoReload     = true,
+    reloadDelay    = 0.1,
+
+    knifeEnabled   = false,
+    knifeMode      = "AutoStab",  -- "AutoStab" or "TpToPlayer"
+    knifeDelay     = 0.3,         -- slider controlled
+    knifeRange     = 20,          -- max stab range studs
 }
+
+local threads = {}
+local function StopThread(n)
+    if threads[n] then task.cancel(threads[n]); threads[n] = nil end
+end
+
+local function Notify(title, content, dur)
+    Rayfield:Notify({Title=title, Content=content, Duration=dur or 3, Image=4483345998})
+end
 
 -- ============================================================
 -- // GUI
@@ -46,169 +62,281 @@ sg.IgnoreGuiInset = true
 sg.DisplayOrder = 100
 sg.Parent = lp.PlayerGui
 
--- Status label
-local status = Instance.new("TextLabel")
-status.BackgroundColor3       = Color3.fromRGB(0,0,0)
-status.BackgroundTransparency = 0.4
-status.Size                   = UDim2.new(0,200,0,32)
-status.AnchorPoint            = Vector2.new(0.5,0)
-status.Position               = UDim2.new(0.5,0,0,10)
-status.TextColor3             = Color3.fromRGB(0,255,200)
-status.TextSize               = 13
-status.Font                   = Enum.Font.GothamBold
-status.Text                   = "💥 Tracer: ON  🔄 Reload: ON"
-status.BorderSizePixel        = 0
-status.Parent                 = sg
-Instance.new("UICorner", status).CornerRadius = UDim.new(0,6)
+local statusLbl = Instance.new("TextLabel")
+statusLbl.BackgroundColor3       = Color3.fromRGB(0,0,0)
+statusLbl.BackgroundTransparency = 0.4
+statusLbl.Size                   = UDim2.new(0,220,0,30)
+statusLbl.AnchorPoint            = Vector2.new(0.5,0)
+statusLbl.Position               = UDim2.new(0.5,0,0,10)
+statusLbl.TextColor3             = Color3.fromRGB(0,200,255)
+statusLbl.TextSize               = 12
+statusLbl.Font                   = Enum.Font.GothamBold
+statusLbl.BorderSizePixel        = 0
+statusLbl.Parent                 = sg
+Instance.new("UICorner", statusLbl).CornerRadius = UDim.new(0,6)
 
 local function UpdateStatus()
-    local t = cfg.tracerEnabled and "ON" or "OFF"
-    local r = cfg.autoReload    and "ON" or "OFF"
-    status.Text       = string.format("💥 Tracer: %s  🔄 Reload: %s", t, r)
-    status.TextColor3 = cfg.tracerEnabled
-        and Color3.fromRGB(0,255,200)
-        or  Color3.fromRGB(255,80,80)
+    statusLbl.Text = string.format(
+        "💥 Tracer: %s  🔄 Reload: %s  🔪 Knife: %s",
+        cfg.tracerEnabled and "ON" or "OFF",
+        cfg.autoReload    and "ON" or "OFF",
+        cfg.knifeEnabled  and "ON" or "OFF"
+    )
 end
+UpdateStatus()
 
 -- ============================================================
--- // BULLET TRACER
--- // Hooks ProjectileRender — fires every time a bullet is shot
--- // Data has Origin (barrel) and Endpoint (where bullet goes)
+-- // TRACER DRAW
 -- ============================================================
 local function DrawTracer(origin, endpoint, color)
     local c = cfg.useGameColor and color or cfg.tracerColor
     local dist = (endpoint - origin).Magnitude
-    if dist < 0.1 then return end
-
-    local mid = (origin + endpoint) / 2
-    local look = CFrame.new(origin, endpoint)
+    if dist < 0.5 then return end
 
     local beam = Instance.new("Part")
-    beam.Anchored     = true
-    beam.CanCollide   = false
-    beam.CastShadow   = false
-    beam.Material     = cfg.tracerMaterial
-    beam.Color        = c
-    beam.Size         = Vector3.new(cfg.tracerWidth, cfg.tracerWidth, dist)
-    beam.CFrame       = look * CFrame.new(0, 0, -dist/2)
-    beam.Parent       = workspace
+    beam.Anchored    = true
+    beam.CanCollide  = false
+    beam.CastShadow  = false
+    beam.Material    = cfg.tracerMaterial
+    beam.Color       = c
+    beam.Size        = Vector3.new(cfg.tracerWidth, cfg.tracerWidth, dist)
+    beam.CFrame      = CFrame.new(origin, endpoint) * CFrame.new(0, 0, -dist/2)
+    beam.Parent      = workspace
 
-    -- Fade out and destroy
-    local startT  = 0
+    local t = 0
     local conn
-    conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
-        startT = startT + dt
-        local alpha = startT / cfg.tracerDuration
-        beam.Transparency = alpha
-        if alpha >= 1 then
+    conn = run.Heartbeat:Connect(function(dt)
+        t = t + dt
+        beam.Transparency = t / cfg.tracerDuration
+        if t >= cfg.tracerDuration then
             conn:Disconnect()
             beam:Destroy()
         end
     end)
 end
 
--- Hook into ProjectileRender (server fires this when a bullet is created)
+-- Impact flash
+local function DrawFlash(pos, color)
+    local f = Instance.new("Part")
+    f.Anchored   = true
+    f.CanCollide = false
+    f.CastShadow = false
+    f.Material   = Enum.Material.Neon
+    f.Color      = color or cfg.tracerColor
+    f.Shape      = Enum.PartType.Ball
+    f.Size       = Vector3.one * 0.5
+    f.Position   = pos
+    f.Parent     = workspace
+    local t = 0
+    local conn
+    conn = run.Heartbeat:Connect(function(dt)
+        t = t + dt
+        local a = t / 0.15
+        f.Transparency = a
+        f.Size = Vector3.one * (0.5 + a * 0.5)
+        if a >= 1 then conn:Disconnect(); f:Destroy() end
+    end)
+end
+
+-- ============================================================
+-- // FIX: HOOK LOCAL PLAYER'S OWN SHOTS
+-- // CheckShot fires when YOU shoot — args[5]=origin CFrame, args[6]=endpoint
+-- // We intercept FireServer to draw YOUR tracer in your custom color
+-- ============================================================
+local origCheckShotFire = CheckShot.FireServer
+CheckShot.FireServer = function(self, ...)
+    -- Draw local tracer BEFORE firing to server
+    if cfg.tracerEnabled then
+        local args = {...}
+        -- args[5] = origin CFrame, args[6] = endpoint vector
+        local originCF  = args[5]
+        local endpointV = args[6]
+        if originCF and endpointV then
+            local ok1 = typeof(originCF)  == "CFrame"
+            local ok2 = typeof(endpointV) == "Vector3"
+                     or (type(endpointV) == "vector")
+            if ok1 and ok2 then
+                local origin = originCF.Position
+                local endpoint = typeof(endpointV) == "Vector3"
+                    and endpointV
+                    or  Vector3.new(endpointV.X, endpointV.Y, endpointV.Z)
+                DrawTracer(origin, endpoint, cfg.tracerColor)
+            end
+        end
+    end
+    return origCheckShotFire(self, ...)
+end
+
+-- Enemy/other player tracers (from server broadcast)
 ProjectileRender.OnClientEvent:Connect(function(data)
     if not cfg.tracerEnabled then return end
     if type(data) ~= "table" then return end
-
-    local origin   = data.Origin
-    local endpoint = data.Endpoint
-    local color    = data.LaserColor or cfg.tracerColor
-
-    if origin and endpoint then
+    local o = data.Origin
+    local e = data.Endpoint
+    local c = data.LaserColor or cfg.tracerColor
+    if o and e then
         DrawTracer(
-            Vector3.new(origin.X, origin.Y, origin.Z),
-            Vector3.new(endpoint.X, endpoint.Y, endpoint.Z),
-            color
+            Vector3.new(o.X, o.Y, o.Z),
+            Vector3.new(e.X, e.Y, e.Z),
+            c
         )
     end
 end)
 
--- Also hook ProjectileFinished for impact flash
 ProjectileFinished.OnClientEvent:Connect(function(data)
     if not cfg.tracerEnabled then return end
     if type(data) ~= "table" then return end
-
-    local hitPos = data.CFrame and data.CFrame.Position
-    if not hitPos then return end
-
-    -- Small impact sphere flash
-    local flash = Instance.new("Part")
-    flash.Anchored     = true
-    flash.CanCollide   = false
-    flash.CastShadow   = false
-    flash.Material     = Enum.Material.Neon
-    flash.Color        = data.ExpColor or data.LaserColor or cfg.tracerColor
-    flash.Shape        = Enum.PartType.Ball
-    flash.Size         = Vector3.one * 0.5
-    flash.Position     = hitPos
-    flash.Parent       = workspace
-
-    local elapsed = 0
-    local conn
-    conn = game:GetService("RunService").Heartbeat:Connect(function(dt)
-        elapsed = elapsed + dt
-        local a = elapsed / 0.15
-        flash.Transparency = a
-        flash.Size = Vector3.one * (0.5 + a * 0.5)
-        if a >= 1 then conn:Disconnect(); flash:Destroy() end
-    end)
+    local hitCF = data.CFrame
+    if hitCF then DrawFlash(hitCF.Position, data.ExpColor or data.LaserColor) end
 end)
 
 -- ============================================================
 -- // AUTO RELOAD
--- // Hooks CheckFire (fires every shot) → delays → fires Reload
 -- ============================================================
-CheckFire.OnClientEvent:Connect(function()
-    if not cfg.autoReload then return end
-    task.delay(cfg.reloadDelay, function()
-        pcall(function()
-            ReloadRemote:FireServer()
+local origCheckFire = CheckFire.FireServer
+CheckFire.FireServer = function(self, ...)
+    if cfg.autoReload then
+        task.delay(cfg.reloadDelay, function()
+            pcall(function() ReloadRemote:FireServer() end)
         end)
-    end)
-end)
+    end
+    return origCheckFire(self, ...)
+end
 
--- Also fire reload on a loop as backup (every 0.5s when enabled)
+-- Backup reload loop
 task.spawn(function()
     while true do
         task.wait(0.5)
         if cfg.autoReload then
-            pcall(function()
-                ReloadRemote:FireServer()
-            end)
+            pcall(function() ReloadRemote:FireServer() end)
         end
     end
 end)
 
 -- ============================================================
--- // RAYFIELD UI
+-- // KNIFE FEATURES
+-- ============================================================
+
+-- Get closest player within range
+local function GetClosestPlayer(range)
+    local char = lp.Character
+    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
+    local myPos = char.HumanoidRootPart.Position
+    local closest, closestDist = nil, range
+
+    for _, plr in ipairs(p:GetPlayers()) do
+        if plr ~= lp then
+            local c2 = plr.Character
+            if c2 and c2:FindFirstChild("HumanoidRootPart") then
+                local d = (c2.HumanoidRootPart.Position - myPos).Magnitude
+                if d < closestDist then
+                    closest = plr
+                    closestDist = d
+                end
+            end
+        end
+    end
+    return closest
+end
+
+-- Get local knife attachment
+local function GetKnife()
+    local char = lp.Character
+    if not char then return nil end
+    local knife = char:FindFirstChild("Knife")
+    if knife then return knife:FindFirstChild("BodyAttach") end
+    return nil
+end
+
+-- Trigger a stab (fires ConnectM6D with knife attachment)
+local function DoStab()
+    local attach = GetKnife()
+    if attach then
+        pcall(function()
+            ConnectM6D:FireServer(attach)
+        end)
+    end
+end
+
+-- Auto Stab loop — stabs closest player in range repeatedly
+local function StartAutoStab()
+    StopThread("knife")
+    threads["knife"] = task.spawn(function()
+        while cfg.knifeEnabled and cfg.knifeMode == "AutoStab" do
+            local target = GetClosestPlayer(cfg.knifeRange)
+            if target and target.Character then
+                DoStab()
+            end
+            task.wait(cfg.knifeDelay)
+        end
+    end)
+end
+
+-- TP to Player + Stab — teleports to closest enemy then stabs
+local function StartTpStab()
+    StopThread("knife")
+    threads["knife"] = task.spawn(function()
+        while cfg.knifeEnabled and cfg.knifeMode == "TpToPlayer" do
+            local target = GetClosestPlayer(999) -- no range limit for TP mode
+            if target and target.Character then
+                local char = lp.Character
+                local g = char and char:FindFirstChild("HumanoidRootPart")
+                local tg = target.Character:FindFirstChild("HumanoidRootPart")
+                if g and tg then
+                    -- TP slightly behind target
+                    g.CFrame = tg.CFrame * CFrame.new(0, 0, 2)
+                    task.wait(0.05)
+                    DoStab()
+                end
+            end
+            task.wait(cfg.knifeDelay)
+        end
+    end)
+end
+
+local function StartKnife()
+    if cfg.knifeMode == "AutoStab" then
+        StartAutoStab()
+    else
+        StartTpStab()
+    end
+end
+
+-- ============================================================
+-- // RAYFIELD WINDOW
 -- ============================================================
 local W = Rayfield:CreateWindow({
-    Name             = "💥 Flick Script",
+    Name             = "💥 Flick Script v2",
     Icon             = 0,
-    LoadingTitle     = "Flick Script",
-    LoadingSubtitle  = "Tracer + Auto Reload",
+    LoadingTitle     = "Flick Script v2",
+    LoadingSubtitle  = "Tracer Fixed + Knife",
     Theme            = "Default",
     DisableBuildWarnings = true,
-    ConfigurationSaving  = {Enabled=true, FolderName="FlickScript", FileName="Config"},
+    ConfigurationSaving  = {Enabled=true, FolderName="FlickScript2", FileName="Config"},
     KeySystem        = false,
 })
 
 -- ── Tab: Tracer ───────────────────────────────────────────────
 local TabT = W:CreateTab("💥 Tracer", 4483345998)
 
+TabT:CreateSection("Your Bullets")
+TabT:CreateLabel("Color picker now affects YOUR bullets. Enemy bullets use game colors.")
+
 TabT:CreateToggle({Name="Enable Tracer", CurrentValue=true, Flag="TracerOn",
     Callback=function(v) cfg.tracerEnabled=v; UpdateStatus() end})
 
-TabT:CreateToggle({Name="Use Game's Laser Color", CurrentValue=true, Flag="GameColor",
-    Callback=function(v) cfg.useGameColor=v end})
-
-TabT:CreateColorPicker({Name="Custom Tracer Color",
-    Color=Color3.fromRGB(0,255,200), Flag="TracerColor",
+TabT:CreateColorPicker({Name="Your Tracer Color",
+    Color=Color3.fromRGB(0,100,255), Flag="TracerColor",
     Callback=function(v) cfg.tracerColor=v end})
 
-TabT:CreateSlider({Name="Tracer Width", Range={1,20}, Increment=1,
+TabT:CreateSection("Enemy Bullets")
+
+TabT:CreateToggle({Name="Use Enemy's Game Color", CurrentValue=false, Flag="GameColor",
+    Callback=function(v) cfg.useGameColor=v end})
+
+TabT:CreateSection("Style")
+
+TabT:CreateSlider({Name="Tracer Width", Range={2,20}, Increment=1,
     Suffix="cm", CurrentValue=8, Flag="TracerWidth",
     Callback=function(v) cfg.tracerWidth=v/100 end})
 
@@ -217,67 +345,126 @@ TabT:CreateSlider({Name="Tracer Duration", Range={5,100}, Increment=5,
     Callback=function(v) cfg.tracerDuration=v/100 end})
 
 TabT:CreateDropdown({
-    Name = "Tracer Material",
-    Options = {"Neon", "SmoothPlastic", "Glass", "ForceField"},
-    CurrentOption = {"Neon"},
-    Flag = "TracerMat",
-    Callback = function(opt)
-        cfg.tracerMaterial = Enum.Material[opt[1]]
-    end,
+    Name="Tracer Material",
+    Options={"Neon","SmoothPlastic","Glass","ForceField"},
+    CurrentOption={"Neon"}, Flag="TracerMat",
+    Callback=function(opt) cfg.tracerMaterial=Enum.Material[opt[1]] end,
 })
 
-TabT:CreateSection("Impact Flash")
-TabT:CreateLabel("Impact flash uses the game's ExpColor automatically.")
-
--- ── Tab: Auto Reload ─────────────────────────────────────────
-local TabR = W:CreateTab("🔄 Auto Reload", 4483345998)
+-- ── Tab: Auto Reload ──────────────────────────────────────────
+local TabR = W:CreateTab("🔄 Reload", 4483345998)
 
 TabR:CreateToggle({Name="Enable Auto Reload", CurrentValue=true, Flag="AutoReload",
     Callback=function(v) cfg.autoReload=v; UpdateStatus() end})
 
-TabR:CreateSlider({Name="Reload Delay After Shot", Range={0,20}, Increment=1,
-    Suffix="ms", CurrentValue=1, Flag="ReloadDelay",
+TabR:CreateSlider({Name="Reload Delay After Shot", Range={0,50}, Increment=1,
+    Suffix="ms", CurrentValue=10, Flag="ReloadDelay",
     Callback=function(v) cfg.reloadDelay=v/100 end})
 
-TabR:CreateSection("Manual")
 TabR:CreateButton({Name="🔄 Reload Now", Callback=function()
     pcall(function() ReloadRemote:FireServer() end)
-    Rayfield:Notify({Title="🔄 Reloaded", Content="Manual reload fired!", Duration=2})
+    Notify("🔄","Reloaded!",2)
 end})
 
--- ── Tab: Mobile ───────────────────────────────────────────────
-if isMobile then
-    -- Quick toggle button for tracer
-    local btn = Instance.new("TextButton")
-    btn.Size             = UDim2.new(0,65,0,65)
-    btn.Position         = UDim2.new(1,-80,1,-90)
-    btn.BackgroundColor3 = Color3.fromRGB(0,200,150)
-    btn.BackgroundTransparency = 0.2
-    btn.Text             = "💥"
-    btn.TextSize         = 28
-    btn.Font             = Enum.Font.GothamBold
-    btn.BorderSizePixel  = 0
-    btn.ZIndex           = 10
-    btn.Parent           = sg
-    Instance.new("UICorner",btn).CornerRadius = UDim.new(1,0)
+-- ── Tab: Knife ────────────────────────────────────────────────
+local TabK = W:CreateTab("🔪 Knife", 4483345998)
 
-    btn.TouchTap:Connect(function()
-        cfg.tracerEnabled = not cfg.tracerEnabled
-        btn.BackgroundColor3 = cfg.tracerEnabled
-            and Color3.fromRGB(0,200,150)
-            or  Color3.fromRGB(200,50,50)
+TabK:CreateSection("Mode")
+
+TabK:CreateDropdown({
+    Name="Knife Mode",
+    Options={"AutoStab","TpToPlayer"},
+    CurrentOption={"AutoStab"}, Flag="KnifeMode",
+    Callback=function(opt)
+        cfg.knifeMode = opt[1]
+        if cfg.knifeEnabled then StartKnife() end
+    end,
+})
+
+TabK:CreateToggle({Name="Enable Knife Feature", CurrentValue=false, Flag="KnifeOn",
+    Callback=function(v)
+        cfg.knifeEnabled = v
         UpdateStatus()
-    end)
+        if v then StartKnife() else StopThread("knife") end
+    end})
+
+TabK:CreateSection("Speed — lower = faster (keep above 0.1 to avoid ban)")
+
+TabK:CreateSlider({
+    Name="Action Delay",
+    Range={10,100}, Increment=5, Suffix="ms", CurrentValue=30,
+    Flag="KnifeDelay",
+    Callback=function(v)
+        cfg.knifeDelay = v/100
+    end,
+})
+
+TabK:CreateSection("Range (AutoStab only)")
+
+TabK:CreateSlider({
+    Name="Stab Range",
+    Range={5,50}, Increment=5, Suffix=" studs", CurrentValue=20,
+    Flag="KnifeRange",
+    Callback=function(v) cfg.knifeRange = v end,
+})
+
+TabK:CreateButton({Name="🔪 Stab Once", Callback=function()
+    DoStab()
+    Notify("🔪","Stab fired!",2)
+end})
+
+TabK:CreateSection("TP to Player info")
+TabK:CreateLabel("TpToPlayer: teleports to closest enemy then stabs.")
+TabK:CreateLabel("Keep delay above 100ms to stay safe.")
+
+-- ── Mobile ────────────────────────────────────────────────────
+if isMobile then
+    local btns = {
+        {lbl="💥", x=-90,  fn=function()
+            cfg.tracerEnabled = not cfg.tracerEnabled
+            UpdateStatus()
+            Notify("💥 Tracer", cfg.tracerEnabled and "ON" or "OFF", 2)
+        end},
+        {lbl="🔄", x=-165, fn=function()
+            cfg.autoReload = not cfg.autoReload
+            UpdateStatus()
+            Notify("🔄 Reload", cfg.autoReload and "ON" or "OFF", 2)
+        end},
+        {lbl="🔪", x=-240, fn=function()
+            cfg.knifeEnabled = not cfg.knifeEnabled
+            UpdateStatus()
+            if cfg.knifeEnabled then StartKnife() else StopThread("knife") end
+            Notify("🔪 Knife", cfg.knifeEnabled and "ON" or "OFF", 2)
+        end},
+    }
+    for _, b in ipairs(btns) do
+        local btn = Instance.new("TextButton")
+        btn.Size             = UDim2.new(0,60,0,60)
+        btn.Position         = UDim2.new(1,b.x,1,-85)
+        btn.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        btn.BackgroundTransparency = 0.2
+        btn.Text             = b.lbl
+        btn.TextSize         = 26
+        btn.Font             = Enum.Font.GothamBold
+        btn.BorderSizePixel  = 0
+        btn.ZIndex           = 10
+        btn.Parent           = sg
+        Instance.new("UICorner",btn).CornerRadius = UDim.new(1,0)
+        btn.TouchTap:Connect(function()
+            b.fn()
+            ts:Create(btn,TweenInfo.new(0.08),{BackgroundTransparency=0.6}):Play()
+            task.delay(0.1,function()
+                ts:Create(btn,TweenInfo.new(0.1),{BackgroundTransparency=0.2}):Play()
+            end)
+        end)
+    end
 end
 
 -- ============================================================
 -- // Ready
 -- ============================================================
 UpdateStatus()
-Rayfield:Notify({
-    Title   = "💥 Flick Script",
-    Content = "Tracer + Auto Reload loaded! Shoot to see tracers.",
-    Duration = 5,
-})
-
-print("[FlickScript] Loaded")
+Notify("💥 Flick Script v2",
+    "Tracer fixed! Your bullets now use your color. Shoot to test.",
+    5)
+print("[FlickScript v2] Loaded")
