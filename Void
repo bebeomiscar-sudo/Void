@@ -1,725 +1,1065 @@
--- // Flick Script v3 — Built-in UI (No Rayfield needed)
--- // Works on any executor, no HTTP required
+--[[
+    rivals.lua
+    HvH utility — post-season3 patch (projectiles dead, use AR/non-projectile)
+    teleport-based aggression + anti-aim + esp + prediction
+]]
 
--- Services
-local p   = game:GetService("Players")
-local rs  = game:GetService("ReplicatedStorage")
-local run = game:GetService("RunService")
-local uis = game:GetService("UserInputService")
-local ts  = game:GetService("TweenService")
-local lp  = p.LocalPlayer
-local isMobile = uis.TouchEnabled
+local Players   = cloneref(game:GetService("Players"))
+local RunService = cloneref(game:GetService("RunService"))
+local UserInputService = cloneref(game:GetService("UserInputService"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local Workspace = cloneref(game:GetService("Workspace"))
+local TweenService = cloneref(game:GetService("TweenService"))
 
--- Remotes
-local ClientRemotes  = lp:WaitForChild("ClientRemotes")
-local GunRemote      = rs:WaitForChild("ModuleScripts"):WaitForChild("GunModules"):WaitForChild("Remote")
+local lp  = Players.LocalPlayer
+local cam = Workspace.CurrentCamera
 
-local ReloadRemote       = ClientRemotes:WaitForChild("Reload")
-local CheckFire          = ClientRemotes:WaitForChild("CheckFire")
-local CheckShot          = ClientRemotes:WaitForChild("CheckShot")
-local ProjectileRender   = GunRemote:WaitForChild("ProjectileRender")
-local ProjectileFinished = GunRemote:WaitForChild("ProjectileFinished")
-local ConnectM6D         = GunRemote:WaitForChild("ConnectM6D")
+-- ── lib ──────────────────────────────────────────────────────────────────────
+local repo    = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
--- ============================================================
--- // Config
--- ============================================================
-local cfg = {
-    tracerEnabled  = true,
-    tracerColor    = Color3.fromRGB(0, 100, 255),
-    useGameColor   = false,
-    tracerWidth    = 0.08,
-    tracerDuration = 0.25,
-    tracerMaterial = Enum.Material.Neon,
-    autoReload     = true,
-    reloadDelay    = 0.1,
-    knifeEnabled   = false,
-    knifeMode      = "AutoStab",
-    knifeDelay     = 0.3,
-    knifeRange     = 20,
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+Library.ShowToggleFrameInKeybinds = true
+
+local Window = Library:CreateWindow({
+    Title          = "rivals.lua",
+    Footer         = "post-s3 // non-projectile only",
+    NotifySide     = "Right",
+    ShowCustomCursor = false,
+})
+
+local Tabs = {
+    Teleport = Window:AddTab("Teleport",  "zap"),
+    AntiAim  = Window:AddTab("Anti-Aim", "shield"),
+    ESP      = Window:AddTab("ESP",       "eye"),
+    Misc     = Window:AddTab("Misc",      "wrench"),
+    Settings = Window:AddTab("UI",        "settings"),
 }
 
-local threads = {}
-local function StopThread(n)
-    if threads[n] then task.cancel(threads[n]); threads[n] = nil end
-end
+-- ── module refs ──────────────────────────────────────────────────────────────
+local mUtil    = nil
+local mEnum    = nil
+local mFig     = nil
+local rUseItem = nil
+local psc      = lp.PlayerScripts
+local ctl      = nil
 
--- ============================================================
--- // UI BUILDER
--- ============================================================
-local sg = Instance.new("ScreenGui")
-sg.Name = "FlickV3"
-sg.ResetOnSpawn = false
-sg.IgnoreGuiInset = true
-sg.DisplayOrder = 999
-sg.Parent = lp.PlayerGui
+pcall(function() mUtil = require(ReplicatedStorage.Modules.Utility) end)
+pcall(function() mEnum = require(ReplicatedStorage.Modules.EnumLibrary) end)
 
--- Colors
-local COL_BG     = Color3.fromRGB(18, 18, 24)
-local COL_PANEL  = Color3.fromRGB(28, 28, 36)
-local COL_ACCENT = Color3.fromRGB(0, 180, 255)
-local COL_ON     = Color3.fromRGB(0, 220, 100)
-local COL_OFF    = Color3.fromRGB(220, 60, 60)
-local COL_TEXT   = Color3.fromRGB(220, 220, 220)
-local COL_MUTED  = Color3.fromRGB(130, 130, 150)
-local COL_BTN    = Color3.fromRGB(40, 40, 55)
-
--- Helper: round corner
-local function rc(inst, r)
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, r or 6)
-    c.Parent = inst
-end
-
--- Helper: make label
-local function mkLabel(parent, txt, size, color, font, xalign)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.Text = txt
-    l.TextSize = size or 13
-    l.TextColor3 = color or COL_TEXT
-    l.Font = font or Enum.Font.Gotham
-    l.TextXAlignment = xalign or Enum.TextXAlignment.Left
-    l.Size = UDim2.new(1,0,1,0)
-    l.Parent = parent
-    return l
-end
-
--- Main window frame
-local win = Instance.new("Frame")
-win.Size = UDim2.new(0, 280, 0, 420)
-win.Position = UDim2.new(0, 16, 0.5, -210)
-win.BackgroundColor3 = COL_BG
-win.BorderSizePixel = 0
-win.Active = true
-win.Draggable = true
-win.Parent = sg
-rc(win, 10)
-
--- Title bar
-local titleBar = Instance.new("Frame")
-titleBar.Size = UDim2.new(1,0,0,36)
-titleBar.BackgroundColor3 = COL_ACCENT
-titleBar.BorderSizePixel = 0
-titleBar.Parent = win
-rc(titleBar, 10)
--- Fix bottom corners of title bar
-local titleFix = Instance.new("Frame")
-titleFix.Size = UDim2.new(1,0,0.5,0)
-titleFix.Position = UDim2.new(0,0,0.5,0)
-titleFix.BackgroundColor3 = COL_ACCENT
-titleFix.BorderSizePixel = 0
-titleFix.Parent = titleBar
-
-local titleLbl = Instance.new("TextLabel")
-titleLbl.BackgroundTransparency = 1
-titleLbl.Size = UDim2.new(1,-40,1,0)
-titleLbl.Position = UDim2.new(0,12,0,0)
-titleLbl.Text = "💥 Flick Script v3"
-titleLbl.TextSize = 14
-titleLbl.TextColor3 = Color3.fromRGB(255,255,255)
-titleLbl.Font = Enum.Font.GothamBold
-titleLbl.TextXAlignment = Enum.TextXAlignment.Left
-titleLbl.Parent = titleBar
-
--- Close / minimize button
-local closeBtn = Instance.new("TextButton")
-closeBtn.Size = UDim2.new(0,24,0,24)
-closeBtn.Position = UDim2.new(1,-30,0,6)
-closeBtn.BackgroundColor3 = Color3.fromRGB(220,60,60)
-closeBtn.Text = "✕"
-closeBtn.TextSize = 12
-closeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-closeBtn.Font = Enum.Font.GothamBold
-closeBtn.BorderSizePixel = 0
-closeBtn.Parent = titleBar
-rc(closeBtn, 12)
-
-local hidden = false
-closeBtn.MouseButton1Click:Connect(function()
-    hidden = not hidden
-    -- hide everything except title bar
-    for _, c in ipairs(win:GetChildren()) do
-        if c ~= titleBar then c.Visible = not hidden end
+local function tryModules()
+    if not ctl then
+        pcall(function() ctl = psc:FindFirstChild("Controllers") end)
     end
-    closeBtn.Text = hidden and "▼" or "✕"
-    win.Size = hidden and UDim2.new(0,280,0,36) or UDim2.new(0,280,0,420)
-end)
-closeBtn.TouchTap:Connect(function()
-    hidden = not hidden
-    for _, c in ipairs(win:GetChildren()) do
-        if c ~= titleBar then c.Visible = not hidden end
-    end
-    closeBtn.Text = hidden and "▼" or "✕"
-    win.Size = hidden and UDim2.new(0,280,0,36) or UDim2.new(0,280,0,420)
-end)
-
--- Tab buttons
-local tabBar = Instance.new("Frame")
-tabBar.Size = UDim2.new(1,-16,0,30)
-tabBar.Position = UDim2.new(0,8,0,42)
-tabBar.BackgroundTransparency = 1
-tabBar.Parent = win
-local tabLayout = Instance.new("UIListLayout")
-tabLayout.FillDirection = Enum.FillDirection.Horizontal
-tabLayout.Padding = UDim.new(0,6)
-tabLayout.Parent = tabBar
-
--- Scroll content area
-local content = Instance.new("ScrollingFrame")
-content.Size = UDim2.new(1,-16,1,-88)
-content.Position = UDim2.new(0,8,0,78)
-content.BackgroundTransparency = 1
-content.BorderSizePixel = 0
-content.ScrollBarThickness = 3
-content.ScrollBarImageColor3 = COL_ACCENT
-content.CanvasSize = UDim2.new(0,0,0,0)
-content.AutomaticCanvasSize = Enum.AutomaticSize.Y
-content.Parent = win
-local contentLayout = Instance.new("UIListLayout")
-contentLayout.Padding = UDim.new(0,6)
-contentLayout.Parent = content
-
--- Tab system
-local tabs = {}
-local tabContents = {}
-local activeTab = nil
-
-local function SetTab(name)
-    activeTab = name
-    for n, btn in pairs(tabs) do
-        btn.BackgroundColor3 = n == name and COL_ACCENT or COL_BTN
-        btn.TextColor3 = n == name and Color3.fromRGB(255,255,255) or COL_MUTED
-    end
-    for n, frame in pairs(tabContents) do
-        frame.Visible = n == name
-    end
-end
-
-local function AddTab(name, icon)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0,72,1,0)
-    btn.BackgroundColor3 = COL_BTN
-    btn.Text = icon.." "..name
-    btn.TextSize = 11
-    btn.TextColor3 = COL_MUTED
-    btn.Font = Enum.Font.GothamBold
-    btn.BorderSizePixel = 0
-    btn.Parent = tabBar
-    rc(btn, 6)
-    tabs[name] = btn
-
-    local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1,0,1,0)
-    frame.BackgroundTransparency = 1
-    frame.Visible = false
-    frame.Parent = content
-    local fl = Instance.new("UIListLayout")
-    fl.Padding = UDim.new(0,6)
-    fl.Parent = frame
-    tabContents[name] = frame
-
-    btn.MouseButton1Click:Connect(function() SetTab(name) end)
-    btn.TouchTap:Connect(function() SetTab(name) end)
-    return frame
-end
-
--- Row helper
-local function AddRow(parent, h)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1,0,0, h or 36)
-    row.BackgroundColor3 = COL_PANEL
-    row.BorderSizePixel = 0
-    row.Parent = parent
-    rc(row, 6)
-    return row
-end
-
--- Toggle helper
-local function AddToggle(parent, label, default, callback)
-    local row = AddRow(parent, 36)
-    local lbl = Instance.new("TextLabel")
-    lbl.BackgroundTransparency = 1
-    lbl.Size = UDim2.new(1,-56,1,0)
-    lbl.Position = UDim2.new(0,10,0,0)
-    lbl.Text = label
-    lbl.TextSize = 13
-    lbl.TextColor3 = COL_TEXT
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Parent = row
-
-    local tog = Instance.new("TextButton")
-    tog.Size = UDim2.new(0,40,0,22)
-    tog.Position = UDim2.new(1,-48,0.5,-11)
-    tog.BackgroundColor3 = default and COL_ON or COL_OFF
-    tog.Text = default and "ON" or "OFF"
-    tog.TextSize = 11
-    tog.TextColor3 = Color3.fromRGB(255,255,255)
-    tog.Font = Enum.Font.GothamBold
-    tog.BorderSizePixel = 0
-    tog.Parent = row
-    rc(tog, 4)
-
-    local state = default
-    local function fire()
-        state = not state
-        tog.BackgroundColor3 = state and COL_ON or COL_OFF
-        tog.Text = state and "ON" or "OFF"
-        callback(state)
-    end
-    tog.MouseButton1Click:Connect(fire)
-    tog.TouchTap:Connect(fire)
-    return tog
-end
-
--- Slider helper
-local function AddSlider(parent, label, min, max, default, suffix, callback)
-    local row = AddRow(parent, 52)
-    local topLbl = Instance.new("TextLabel")
-    topLbl.BackgroundTransparency = 1
-    topLbl.Size = UDim2.new(1,-10,0,20)
-    topLbl.Position = UDim2.new(0,10,0,2)
-    topLbl.Text = label..": "..default..(suffix or "")
-    topLbl.TextSize = 12
-    topLbl.TextColor3 = COL_TEXT
-    topLbl.Font = Enum.Font.Gotham
-    topLbl.TextXAlignment = Enum.TextXAlignment.Left
-    topLbl.Parent = row
-
-    local track = Instance.new("Frame")
-    track.Size = UDim2.new(1,-20,0,6)
-    track.Position = UDim2.new(0,10,0,30)
-    track.BackgroundColor3 = COL_BTN
-    track.BorderSizePixel = 0
-    track.Parent = row
-    rc(track, 3)
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default-min)/(max-min),0,1,0)
-    fill.BackgroundColor3 = COL_ACCENT
-    fill.BorderSizePixel = 0
-    fill.Parent = track
-    rc(fill, 3)
-
-    local knob = Instance.new("TextButton")
-    knob.Size = UDim2.new(0,14,0,14)
-    knob.AnchorPoint = Vector2.new(0.5,0.5)
-    knob.Position = UDim2.new((default-min)/(max-min),0,0.5,0)
-    knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    knob.Text = ""
-    knob.BorderSizePixel = 0
-    knob.Parent = track
-    rc(knob, 7)
-
-    local dragging = false
-    local function update(x)
-        local abs = track.AbsolutePosition.X
-        local w   = track.AbsoluteSize.X
-        local pct = math.clamp((x - abs) / w, 0, 1)
-        local val = math.floor(min + (max-min)*pct + 0.5)
-        fill.Size = UDim2.new(pct,0,1,0)
-        knob.Position = UDim2.new(pct,0,0.5,0)
-        topLbl.Text = label..": "..val..(suffix or "")
-        callback(val)
-    end
-
-    knob.MouseButton1Down:Connect(function() dragging=true end)
-    knob.TouchLongPress:Connect(function() dragging=true end)
-    uis.InputChanged:Connect(function(inp)
-        if dragging and (inp.UserInputType==Enum.UserInputType.MouseMovement
-            or inp.UserInputType==Enum.UserInputType.Touch) then
-            update(inp.Position.X)
-        end
-    end)
-    uis.InputEnded:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1
-            or inp.UserInputType==Enum.UserInputType.Touch then
-            dragging=false
-        end
-    end)
-    track.InputBegan:Connect(function(inp)
-        if inp.UserInputType==Enum.UserInputType.MouseButton1
-            or inp.UserInputType==Enum.UserInputType.Touch then
-            update(inp.Position.X)
-        end
-    end)
-end
-
--- Button helper
-local function AddButton(parent, label, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,0,0,34)
-    btn.BackgroundColor3 = COL_ACCENT
-    btn.Text = label
-    btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(255,255,255)
-    btn.Font = Enum.Font.GothamBold
-    btn.BorderSizePixel = 0
-    btn.Parent = parent
-    rc(btn, 6)
-    btn.MouseButton1Click:Connect(callback)
-    btn.TouchTap:Connect(callback)
-    return btn
-end
-
--- Section label helper
-local function AddSection(parent, txt)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(1,0,0,20)
-    row.BackgroundTransparency = 1
-    row.Parent = parent
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.Size = UDim2.new(1,0,1,0)
-    l.Text = "— "..txt.." —"
-    l.TextSize = 11
-    l.TextColor3 = COL_ACCENT
-    l.Font = Enum.Font.GothamBold
-    l.TextXAlignment = Enum.TextXAlignment.Center
-    l.Parent = row
-end
-
--- ============================================================
--- // BUILD TABS
--- ============================================================
-local tTracer = AddTab("Tracer", "💥")
-local tReload = AddTab("Reload", "🔄")
-local tKnife  = AddTab("Knife",  "🔪")
-SetTab("Tracer")
-
--- ── Tracer Tab ────────────────────────────────────────────────
-AddSection(tTracer, "Your Bullets")
-AddToggle(tTracer, "Enable Tracer", true, function(v)
-    cfg.tracerEnabled = v
-end)
-
--- Color picker (simple preset buttons)
-local colorRow = AddRow(tTracer, 60)
-local colorLbl = Instance.new("TextLabel")
-colorLbl.BackgroundTransparency=1
-colorLbl.Size=UDim2.new(1,0,0,18)
-colorLbl.Position=UDim2.new(0,10,0,4)
-colorLbl.Text="Tracer Color:"
-colorLbl.TextSize=12
-colorLbl.TextColor3=COL_TEXT
-colorLbl.Font=Enum.Font.Gotham
-colorLbl.TextXAlignment=Enum.TextXAlignment.Left
-colorLbl.Parent=colorRow
-
-local colors = {
-    {name="Blue",  c=Color3.fromRGB(0,100,255)},
-    {name="Red",   c=Color3.fromRGB(255,50,50)},
-    {name="Green", c=Color3.fromRGB(0,255,100)},
-    {name="Cyan",  c=Color3.fromRGB(0,255,220)},
-    {name="White", c=Color3.fromRGB(255,255,255)},
-}
-local colorBtnFrame = Instance.new("Frame")
-colorBtnFrame.BackgroundTransparency=1
-colorBtnFrame.Size=UDim2.new(1,-10,0,26)
-colorBtnFrame.Position=UDim2.new(0,10,0,26)
-colorBtnFrame.Parent=colorRow
-local cbl = Instance.new("UIListLayout")
-cbl.FillDirection=Enum.FillDirection.Horizontal
-cbl.Padding=UDim.new(0,4)
-cbl.Parent=colorBtnFrame
-
-local selectedColorBtn = nil
-for _, cd in ipairs(colors) do
-    local cb = Instance.new("TextButton")
-    cb.Size=UDim2.new(0,44,0,22)
-    cb.BackgroundColor3=cd.c
-    cb.Text=cd.name
-    cb.TextSize=10
-    cb.TextColor3=Color3.fromRGB(255,255,255)
-    cb.Font=Enum.Font.GothamBold
-    cb.BorderSizePixel=0
-    cb.Parent=colorBtnFrame
-    rc(cb,4)
-    local function pick()
-        cfg.tracerColor = cd.c
-        if selectedColorBtn then
-            selectedColorBtn.BorderSizePixel=0
-        end
-        cb.BorderSizePixel=2
-        selectedColorBtn=cb
-    end
-    cb.MouseButton1Click:Connect(pick)
-    cb.TouchTap:Connect(pick)
-    if cd.name=="Blue" then pick() end
-end
-
-AddToggle(tTracer, "Use Enemy's Color", false, function(v)
-    cfg.useGameColor = v
-end)
-AddSection(tTracer, "Style")
-AddSlider(tTracer, "Width", 2, 20, 8, "cm", function(v) cfg.tracerWidth=v/100 end)
-AddSlider(tTracer, "Duration", 5, 100, 25, "ms", function(v) cfg.tracerDuration=v/100 end)
-
--- ── Reload Tab ────────────────────────────────────────────────
-AddSection(tReload, "Auto Reload")
-AddToggle(tReload, "Enable Auto Reload", true, function(v)
-    cfg.autoReload = v
-end)
-AddSlider(tReload, "Reload Delay", 0, 50, 10, "ms", function(v)
-    cfg.reloadDelay = v/100
-end)
-AddButton(tReload, "🔄 Reload Now", function()
-    pcall(function() ReloadRemote:FireServer() end)
-end)
-
--- ── Knife Tab ─────────────────────────────────────────────────
-AddSection(tKnife, "Knife Mode")
-
--- Mode buttons
-local modeRow = AddRow(tKnife, 36)
-local modeLabel = Instance.new("TextLabel")
-modeLabel.BackgroundTransparency=1
-modeLabel.Size=UDim2.new(0,90,1,0)
-modeLabel.Position=UDim2.new(0,10,0,0)
-modeLabel.Text="Mode:"
-modeLabel.TextSize=13
-modeLabel.TextColor3=COL_TEXT
-modeLabel.Font=Enum.Font.Gotham
-modeLabel.TextXAlignment=Enum.TextXAlignment.Left
-modeLabel.Parent=modeRow
-
-local stabBtn = Instance.new("TextButton")
-stabBtn.Size=UDim2.new(0,80,0,24)
-stabBtn.Position=UDim2.new(0,70,0.5,-12)
-stabBtn.BackgroundColor3=COL_ACCENT
-stabBtn.Text="AutoStab"
-stabBtn.TextSize=11
-stabBtn.TextColor3=Color3.fromRGB(255,255,255)
-stabBtn.Font=Enum.Font.GothamBold
-stabBtn.BorderSizePixel=0
-stabBtn.Parent=modeRow
-rc(stabBtn,4)
-
-local tpBtn = Instance.new("TextButton")
-tpBtn.Size=UDim2.new(0,80,0,24)
-tpBtn.Position=UDim2.new(0,158,0.5,-12)
-tpBtn.BackgroundColor3=COL_BTN
-tpBtn.Text="TpToPlayer"
-tpBtn.TextSize=11
-tpBtn.TextColor3=COL_MUTED
-tpBtn.Font=Enum.Font.GothamBold
-tpBtn.BorderSizePixel=0
-tpBtn.Parent=modeRow
-rc(tpBtn,4)
-
-local function SetMode(m)
-    cfg.knifeMode = m
-    stabBtn.BackgroundColor3 = m=="AutoStab" and COL_ACCENT or COL_BTN
-    stabBtn.TextColor3 = m=="AutoStab" and Color3.fromRGB(255,255,255) or COL_MUTED
-    tpBtn.BackgroundColor3 = m=="TpToPlayer" and COL_ACCENT or COL_BTN
-    tpBtn.TextColor3 = m=="TpToPlayer" and Color3.fromRGB(255,255,255) or COL_MUTED
-end
-stabBtn.MouseButton1Click:Connect(function() SetMode("AutoStab") end)
-stabBtn.TouchTap:Connect(function() SetMode("AutoStab") end)
-tpBtn.MouseButton1Click:Connect(function() SetMode("TpToPlayer") end)
-tpBtn.TouchTap:Connect(function() SetMode("TpToPlayer") end)
-
-AddToggle(tKnife, "Enable Knife", false, function(v)
-    cfg.knifeEnabled = v
-    if v then StartKnife() else StopThread("knife") end
-end)
-
-AddSection(tKnife, "Speed — keep above 100ms")
-AddSlider(tKnife, "Action Delay", 10, 200, 100, "ms", function(v)
-    cfg.knifeDelay = v/1000
-end)
-
-AddSection(tKnife, "Range (AutoStab only)")
-AddSlider(tKnife, "Stab Range", 5, 50, 20, " studs", function(v)
-    cfg.knifeRange = v
-end)
-
-AddButton(tKnife, "🔪 Stab Once", function()
-    local attach = GetKnife()
-    if attach then
-        pcall(function() ConnectM6D:FireServer(attach) end)
-    end
-end)
-
--- ============================================================
--- // TRACER LOGIC
--- ============================================================
-local function DrawTracer(origin, endpoint, color)
-    local c = cfg.useGameColor and color or cfg.tracerColor
-    local dist = (endpoint - origin).Magnitude
-    if dist < 0.5 then return end
-    local beam = Instance.new("Part")
-    beam.Anchored=true; beam.CanCollide=false; beam.CastShadow=false
-    beam.Material=cfg.tracerMaterial; beam.Color=c
-    beam.Size=Vector3.new(cfg.tracerWidth,cfg.tracerWidth,dist)
-    beam.CFrame=CFrame.new(origin,endpoint)*CFrame.new(0,0,-dist/2)
-    beam.Parent=workspace
-    local t=0; local conn
-    conn=run.Heartbeat:Connect(function(dt)
-        t=t+dt
-        beam.Transparency=t/cfg.tracerDuration
-        if t>=cfg.tracerDuration then conn:Disconnect(); beam:Destroy() end
-    end)
-end
-
-local function DrawFlash(pos, color)
-    local f=Instance.new("Part")
-    f.Anchored=true; f.CanCollide=false; f.Material=Enum.Material.Neon
-    f.Color=color or cfg.tracerColor; f.Shape=Enum.PartType.Ball
-    f.Size=Vector3.one*0.5; f.Position=pos; f.Parent=workspace
-    local t=0; local conn
-    conn=run.Heartbeat:Connect(function(dt)
-        t=t+dt; local a=t/0.15
-        f.Transparency=a; f.Size=Vector3.one*(0.5+a*0.5)
-        if a>=1 then conn:Disconnect(); f:Destroy() end
-    end)
-end
-
--- Hook YOUR shots via CheckShot.FireServer
-local origCheckShotFire = CheckShot.FireServer
-CheckShot.FireServer = function(self, ...)
-    if cfg.tracerEnabled then
-        local args = {...}
-        local originCF  = args[5]
-        local endpointV = args[6]
-        if typeof(originCF)=="CFrame" and endpointV then
-            local ep = typeof(endpointV)=="Vector3"
-                and endpointV
-                or Vector3.new(endpointV.X, endpointV.Y, endpointV.Z)
-            DrawTracer(originCF.Position, ep, cfg.tracerColor)
+    if ctl then
+        if not mFig then
+            pcall(function()
+                mFig = require(ctl:WaitForChild("FighterController", 5))
+            end)
         end
     end
-    return origCheckShotFire(self, ...)
-end
-
--- Enemy tracers
-ProjectileRender.OnClientEvent:Connect(function(data)
-    if not cfg.tracerEnabled or type(data)~="table" then return end
-    local o,e,c = data.Origin, data.Endpoint, data.LaserColor or cfg.tracerColor
-    if o and e then
-        DrawTracer(Vector3.new(o.X,o.Y,o.Z), Vector3.new(e.X,e.Y,e.Z), c)
-    end
-end)
-
-ProjectileFinished.OnClientEvent:Connect(function(data)
-    if not cfg.tracerEnabled or type(data)~="table" then return end
-    if data.CFrame then DrawFlash(data.CFrame.Position, data.ExpColor or data.LaserColor) end
-end)
-
--- ============================================================
--- // AUTO RELOAD LOGIC
--- ============================================================
-local origCheckFire = CheckFire.FireServer
-CheckFire.FireServer = function(self, ...)
-    if cfg.autoReload then
-        task.delay(cfg.reloadDelay, function()
-            pcall(function() ReloadRemote:FireServer() end)
+    if not rUseItem then
+        pcall(function()
+            rUseItem = ReplicatedStorage.Remotes.Replication.Fighter.UseItem
         end)
     end
-    return origCheckFire(self, ...)
 end
+
+pcall(tryModules)
 task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if cfg.autoReload then pcall(function() ReloadRemote:FireServer() end) end
+    while not (mFig and rUseItem) do
+        task.wait(3)
+        tryModules()
     end
 end)
 
--- ============================================================
--- // KNIFE LOGIC
--- ============================================================
-local function GetKnife()
-    local char = lp.Character
-    if not char then return nil end
-    local knife = char:FindFirstChild("Knife")
-    return knife and knife:FindFirstChild("BodyAttach") or nil
+-- ── character ────────────────────────────────────────────────────────────────
+local ch  = lp.Character or lp.CharacterAdded:Wait()
+local hrp = ch:FindFirstChild("HumanoidRootPart")
+
+lp.CharacterAdded:Connect(function(c)
+    ch  = c
+    hrp = c:WaitForChild("HumanoidRootPart")
+end)
+
+-- ── helpers ───────────────────────────────────────────────────────────────────
+local function sameteam(p)
+    local ok = false
+    pcall(function()
+        local a = lp:GetAttribute("TeamID")
+        local b = p:GetAttribute("TeamID")
+        if a ~= nil and b ~= nil then ok = (a == b) end
+    end)
+    return ok
 end
 
-local function GetClosestPlayer(range)
-    local char = lp.Character
-    if not char or not char:FindFirstChild("HumanoidRootPart") then return nil end
-    local myPos = char.HumanoidRootPart.Position
-    local closest, closestDist = nil, range
-    for _, plr in ipairs(p:GetPlayers()) do
-        if plr ~= lp then
-            local c2 = plr.Character
-            if c2 and c2:FindFirstChild("HumanoidRootPart") then
-                local d = (c2.HumanoidRootPart.Position - myPos).Magnitude
-                if d < closestDist then closest=plr; closestDist=d end
-            end
-        end
-    end
-    return closest
+local function isalive(p)
+    if p == lp then return false end
+    local c = p.Character
+    if not c then return false end
+    local h = c:FindFirstChildOfClass("Humanoid")
+    return h and h.Health > 0
 end
 
-local function DoStab()
-    local attach = GetKnife()
-    if attach then pcall(function() ConnectM6D:FireServer(attach) end) end
+local function gethrp(char)
+    return char and char:FindFirstChild("HumanoidRootPart")
 end
 
-local function StartAutoStab()
-    StopThread("knife")
-    threads["knife"] = task.spawn(function()
-        while cfg.knifeEnabled and cfg.knifeMode=="AutoStab" do
-            if GetClosestPlayer(cfg.knifeRange) then DoStab() end
-            task.wait(cfg.knifeDelay)
-        end
+-- fire a shot at bp using the currently equipped item
+local function fireshot(bp, origin)
+    if not mUtil or not mEnum or not rUseItem then return end
+    local lf = nil
+    pcall(function() lf = mFig and mFig.LocalFighter end)
+    if not lf then return end
+    local item = lf.EquippedItem
+    if not item then return end
+    local oid = nil
+    pcall(function() oid = item:Get("ObjectID") end)
+    if not oid then return end
+    local org   = origin or (ch and gethrp(ch) and gethrp(ch).Position + Vector3.new(0,1.5,0)) or Vector3.zero
+    local aimCF = CFrame.lookAt(org, bp.Position)
+    local sd    = {}
+    pcall(function()
+        sd[utf8.char(1)] = {
+            [utf8.char(0)] = mUtil:EncodeCFrame(aimCF),
+            [utf8.char(1)] = mUtil:EncodeCFrame(bp.CFrame),
+            [utf8.char(2)] = bp,
+            [utf8.char(3)] = mUtil:EncodeCFrame(bp.CFrame:ToObjectSpace(CFrame.new(bp.Position))),
+        }
+    end)
+    pcall(function() rUseItem:FireServer(oid, mEnum:ToEnum("StartShooting"), sd, nil) end)
+    task.delay(0.07, function()
+        pcall(function() rUseItem:FireServer(oid, mEnum:ToEnum("StopShooting"), {}, nil) end)
     end)
 end
 
-local function StartTpStab()
-    StopThread("knife")
-    threads["knife"] = task.spawn(function()
-        while cfg.knifeEnabled and cfg.knifeMode=="TpToPlayer" do
-            local target = GetClosestPlayer(999)
-            if target and target.Character then
-                local char = lp.Character
-                local g = char and char:FindFirstChild("HumanoidRootPart")
-                local tg = target.Character:FindFirstChild("HumanoidRootPart")
-                if g and tg then
-                    g.CFrame = tg.CFrame * CFrame.new(0,0,2)
-                    task.wait(0.05)
-                    DoStab()
+-- find closest enemy, optionally skip team
+local function closestEnemy(teamcheck)
+    local myhrp = ch and gethrp(ch)
+    if not myhrp then return nil, nil end
+    local best, bc, bd = nil, nil, math.huge
+    for _, p in ipairs(Players:GetPlayers()) do
+        if not isalive(p) then continue end
+        if teamcheck and sameteam(p) then continue end
+        local eh = gethrp(p.Character)
+        if not eh then continue end
+        local d = (myhrp.Position - eh.Position).Magnitude
+        if d < bd then bd = d; best = p; bc = p.Character end
+    end
+    return best, bc
+end
+
+-- priority sort
+local function sortedEnemies(mode, teamcheck)
+    local myhrp = ch and gethrp(ch)
+    if not myhrp then return {} end
+    local list = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if not isalive(p) then continue end
+        if teamcheck and sameteam(p) then continue end
+        local eh = gethrp(p.Character)
+        if not eh then continue end
+        local hm = p.Character:FindFirstChildOfClass("Humanoid")
+        table.insert(list, {
+            player = p,
+            char   = p.Character,
+            hrp    = eh,
+            dist   = (myhrp.Position - eh.Position).Magnitude,
+            hp     = hm and hm.Health or 0,
+        })
+    end
+    if     mode == "Closest" then table.sort(list, function(a,b) return a.dist < b.dist end)
+    elseif mode == "LowHP"   then table.sort(list, function(a,b) return a.hp   < b.hp   end)
+    elseif mode == "HighHP"  then table.sort(list, function(a,b) return a.hp   > b.hp   end)
+    elseif mode == "Random"  then
+        for i = #list, 2, -1 do
+            local j = math.random(i)
+            list[i], list[j] = list[j], list[i]
+        end
+    end
+    return list
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  FEATURE 1 — TELEPORT ATTACK
+--  Save pos → tp onto enemy → shoot → return
+--  Works without ragebot. Keybind or auto loop.
+-- ═══════════════════════════════════════════════════════════════════════════════
+local TP = {
+    enabled    = false,
+    targetMode = "Head",      -- Head / Legs / HRP
+    priority   = "Closest",   -- Closest / LowHP / HighHP / Random
+    teamcheck  = true,
+    autoLoop   = false,        -- continuously tp + shoot in loop
+    loopDelay  = 0.15,         -- seconds between each loop cycle
+    shots      = 1,            -- shots to fire each visit
+    running    = false,
+}
+
+local function tpAttack()
+    if TP.running then return end
+    local myhrp = ch and gethrp(ch)
+    if not myhrp then return end
+
+    local enemies = sortedEnemies(TP.priority, TP.teamcheck)
+    if #enemies == 0 then return end
+    local target = enemies[1]
+    local tc     = target.char
+
+    local savedCF = myhrp.CFrame
+
+    -- pick landing spot
+    local landPos
+    if TP.targetMode == "Head" then
+        local head = tc:FindFirstChild("Head")
+        landPos = (head and head.Position or target.hrp.Position) + Vector3.new(0, 3.2, 0)
+    elseif TP.targetMode == "Legs" then
+        landPos = target.hrp.Position - Vector3.new(0, 2.8, 0)
+    else
+        landPos = target.hrp.Position + Vector3.new(0, 1, 0)
+    end
+
+    TP.running = true
+
+    pcall(function() myhrp.CFrame = CFrame.new(landPos) end)
+    task.wait(0.04)
+
+    -- fire N shots
+    local bp = tc:FindFirstChild("HumanoidRootPart") or tc:FindFirstChild("UpperTorso") or tc:FindFirstChild("Head")
+    if bp then
+        for i = 1, math.max(TP.shots, 1) do
+            if i > 1 then task.wait(0.04) end
+            fireshot(bp, myhrp.Position)
+        end
+    end
+
+    task.wait(0.03)
+    pcall(function() myhrp.CFrame = savedCF end)
+    TP.running = false
+end
+
+local tpLoopConn = nil
+local function startTPLoop()
+    if tpLoopConn then tpLoopConn:Disconnect() end
+    tpLoopConn = task.spawn(function()
+        while TP.enabled and TP.autoLoop do
+            if not TP.running then tpAttack() end
+            task.wait(math.max(TP.loopDelay, 0.05))
+        end
+    end)
+end
+local function stopTPLoop()
+    if tpLoopConn then
+        pcall(function() tpLoopConn = nil end)
+    end
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  FEATURE 2 — ANTI-AIM
+--  Heartbeat desync, RenderStepped restore (your view never breaks)
+--  Pitch: Off / Up / Zero / Down / Glitch / Random
+--  Yaw Base: Local / AtTarget
+--  Yaw Mode: Off / Forward / Backward / Spin / GlitchSpin / StutterSpin
+--  Yaw Angle: -180 to 180
+--  Underground toggle
+-- ═══════════════════════════════════════════════════════════════════════════════
+local AA = {
+    enabled     = false,
+    pitch       = "Off",
+    yawBase     = "Local",
+    yaw         = "Off",
+    yawAngle    = 0,
+    underground = false,
+}
+
+local aaSavedCF = nil
+local aaSavedLV = nil
+local aaSavedAV = nil
+local aaSpinA   = 0
+local aaStutter = false
+local aaHB      = nil
+local aaRS      = nil
+
+local function betterRandom(mi, ma, dmi, dma)
+    local v = math.random(mi, ma)
+    local guard = 0
+    repeat
+        v = math.random(mi, ma)
+        guard = guard + 1
+    until (v < dmi or v > dma) or guard > 30
+    return v
+end
+
+local function buildAAFrame(dt)
+    local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not myhrp then return nil end
+    local base = aaSavedCF or myhrp.CFrame
+    local pos  = base.Position
+    if AA.underground then pos = pos - Vector3.new(0, 5, 0) end
+
+    local pitch = 0
+    if     AA.pitch == "Up"     then pitch = math.rad(-89)
+    elseif AA.pitch == "Zero"   then pitch = 0
+    elseif AA.pitch == "Down"   then pitch = math.rad(89)
+    elseif AA.pitch == "Glitch" then pitch = math.rad(betterRandom(-89, 89, -5, 5))
+    elseif AA.pitch == "Random" then pitch = math.rad(math.random(-89, 89))
+    end
+
+    local _, ry, _ = base:ToEulerAnglesYXZ()
+    local baseYaw  = ry
+    if AA.yawBase == "AtTarget" then
+        local _, tc = closestEnemy(true)
+        if tc then
+            local eh = gethrp(tc)
+            if eh then
+                local dir = (eh.Position - base.Position) * Vector3.new(1,0,1)
+                if dir.Magnitude > 0.01 then
+                    baseYaw = math.atan2(-dir.X, -dir.Z)
                 end
             end
-            task.wait(cfg.knifeDelay)
+        end
+    end
+
+    local yoff = math.rad(AA.yawAngle)
+    if     AA.yaw == "Forward"    then yoff = yoff + 0
+    elseif AA.yaw == "Backward"   then yoff = yoff + math.pi
+    elseif AA.yaw == "Spin"       then aaSpinA = aaSpinA + dt * math.rad(720); yoff = yoff + aaSpinA
+    elseif AA.yaw == "GlitchSpin" then
+        aaSpinA = aaSpinA + dt * math.rad(1440)
+        yoff = yoff + aaSpinA + math.rad(betterRandom(-180, 180, -15, 15))
+    elseif AA.yaw == "StutterSpin" then
+        aaStutter = not aaStutter
+        aaSpinA = aaStutter and (aaSpinA + dt * math.rad(720)) or (aaSpinA - dt * math.rad(360))
+        yoff = yoff + aaSpinA
+    end
+
+    return CFrame.new(pos) * CFrame.fromEulerAnglesYXZ(pitch, baseYaw + yoff, 0)
+end
+
+local function stopAA()
+    AA.enabled = false
+    if aaHB then aaHB:Disconnect(); aaHB = nil end
+    pcall(function() RunService:UnbindFromRenderStep("aa_sync") end)
+    aaSpinA = 0; aaStutter = false; aaSavedCF = nil
+end
+
+local function startAA()
+    stopAA()
+    AA.enabled = true
+    aaSpinA    = 0
+
+    aaHB = RunService.Heartbeat:Connect(function(dt)
+        if not AA.enabled then stopAA(); return end
+        local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not myhrp then return end
+        aaSavedCF = myhrp.CFrame
+        aaSavedLV = myhrp.AssemblyLinearVelocity
+        aaSavedAV = myhrp.AssemblyAngularVelocity
+
+        local desync = buildAAFrame(dt)
+        if not desync then return end
+
+        if AA.pitch == "Glitch" or AA.yaw == "GlitchSpin" then
+            pcall(function()
+                myhrp.CFrame = CFrame.new(
+                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646),
+                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646),
+                    betterRandom(-2147483646, 2147483646, -1147483646, 1147483646)
+                ) * CFrame.Angles(math.pi, math.pi, math.pi)
+                myhrp.AssemblyLinearVelocity = Vector3.new(
+                    betterRandom(-1e6, 1e6, -1e4, 1e4),
+                    betterRandom(-1e6, 1e6, -1e4, 1e4),
+                    betterRandom(-1e6, 1e6, -1e4, 1e4)
+                )
+                myhrp.AssemblyAngularVelocity = Vector3.new(
+                    betterRandom(-1e6, 1e6, -1e4, 1e4),
+                    betterRandom(-1e6, 1e6, -1e4, 1e4),
+                    betterRandom(-1e6, 1e6, -1e4, 1e4)
+                )
+            end)
+        else
+            pcall(function() myhrp.CFrame = desync end)
+        end
+    end)
+
+    RunService:BindToRenderStep("aa_sync", Enum.RenderPriority.First.Value, function()
+        if not AA.enabled then return end
+        local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not myhrp or not aaSavedCF then return end
+        pcall(function()
+            myhrp.CFrame                  = aaSavedCF
+            myhrp.AssemblyLinearVelocity  = aaSavedLV or Vector3.zero
+            myhrp.AssemblyAngularVelocity = aaSavedAV or Vector3.zero
+        end)
+    end)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  FEATURE 3 — ESP
+--  Box (SelectionBox), health bar (BillboardGui), name tag, tracer lines
+-- ═══════════════════════════════════════════════════════════════════════════════
+local ESP = {
+    boxes      = false,
+    healthbar  = false,
+    names      = false,
+    tracers    = false,
+    teamcheck  = true,
+    boxColor   = Color3.fromRGB(255, 60, 60),
+    tracerColor = Color3.fromRGB(255, 60, 60),
+    tracerThick = 1.5,
+    tracerDur   = 0.3,
+}
+
+local espData    = {}    -- [player] = { box, billboard, tracer }
+local tracerPool = {}
+
+local espFolder = Instance.new("Folder")
+espFolder.Name   = "ESP"
+espFolder.Parent = Workspace
+
+local function removeESP(p)
+    local d = espData[p]
+    if not d then return end
+    if d.box       then d.box:Destroy() end
+    if d.billboard then d.billboard:Destroy() end
+    espData[p] = nil
+end
+
+local function buildESP(p)
+    if p == lp then return end
+    local c = p.Character
+    if not c then return end
+    removeESP(p)
+    local d = {}
+
+    if ESP.boxes then
+        local b = Instance.new("SelectionBox")
+        b.Color3              = ESP.boxColor
+        b.LineThickness       = 0.04
+        b.SurfaceTransparency = 1
+        b.Adornee             = c
+        b.Parent              = espFolder
+        d.box = b
+    end
+
+    if ESP.healthbar or ESP.names then
+        local bb = Instance.new("BillboardGui")
+        bb.Size            = UDim2.new(0, 120, 0, 40)
+        bb.StudsOffset     = Vector3.new(0, 3.2, 0)
+        bb.AlwaysOnTop     = true
+        bb.Adornee         = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
+        bb.Parent          = espFolder
+
+        if ESP.names then
+            local lbl = Instance.new("TextLabel", bb)
+            lbl.Size                = UDim2.new(1, 0, 0.5, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.TextColor3          = Color3.fromRGB(255,255,255)
+            lbl.TextStrokeTransparency = 0.4
+            lbl.Font                = Enum.Font.GothamBold
+            lbl.TextScaled          = true
+            lbl.Text                = p.Name
+            d.namelbl = lbl
+        end
+
+        if ESP.healthbar then
+            local hm = c:FindFirstChildOfClass("Humanoid")
+            local bar = Instance.new("Frame", bb)
+            bar.Size              = UDim2.new(1, 0, 0.35, 0)
+            bar.Position          = UDim2.new(0, 0, 0.6, 0)
+            bar.BackgroundColor3  = Color3.fromRGB(30,30,30)
+            bar.BorderSizePixel   = 0
+            local fill = Instance.new("Frame", bar)
+            fill.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
+            fill.BorderSizePixel  = 0
+            fill.Size = UDim2.new(hm and (hm.Health / math.max(hm.MaxHealth,1)) or 1, 0, 1, 0)
+            d.healthfill = fill
+            d.healthhm   = hm
+        end
+
+        d.billboard = bb
+    end
+
+    espData[p] = d
+end
+
+local function updateESPFrame()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p == lp then continue end
+        if ESP.teamcheck and sameteam(p) then
+            removeESP(p); continue
+        end
+        local c  = p.Character
+        local hm = c and c:FindFirstChildOfClass("Humanoid")
+        if not c or not hm or hm.Health <= 0 then
+            removeESP(p); continue
+        end
+        local d = espData[p]
+        if not d then
+            buildESP(p); d = espData[p]
+        end
+        if d and d.healthfill and d.healthhm then
+            local pct = math.clamp(d.healthhm.Health / math.max(d.healthhm.MaxHealth,1), 0, 1)
+            d.healthfill.Size = UDim2.new(pct, 0, 1, 0)
+            d.healthfill.BackgroundColor3 = Color3.fromHSV(pct * 0.33, 0.9, 0.9)
+        end
+    end
+end
+
+-- tracer spawning (called from fireshot wrapper)
+local function spawnTracer(from3, to3)
+    if not ESP.tracers then return end
+    local l = Drawing.new("Line")
+    l.Thickness    = ESP.tracerThick
+    l.Color        = ESP.tracerColor
+    l.Transparency = 0
+    l.Visible      = false
+    table.insert(tracerPool, { line=l, born=tick(), from=from3, to=to3 })
+end
+
+local function w2s(p3)
+    local sp, on = cam:WorldToViewportPoint(p3)
+    if not on or sp.Z <= 0 then return nil end
+    return Vector2.new(sp.X, sp.Y)
+end
+
+local function updateTracers()
+    local now   = tick()
+    local alive = {}
+    for _, t in ipairs(tracerPool) do
+        local age  = now - t.born
+        local life = math.max(ESP.tracerDur, 0.05)
+        if age >= life then
+            pcall(function() t.line:Remove() end)
+        else
+            local a  = 1 - age / life
+            local f2 = Vector2.new(cam.ViewportSize.X * 0.5, cam.ViewportSize.Y)
+            local t2 = w2s(t.to)
+            if t2 then
+                t.line.From         = f2
+                t.line.To           = t2
+                t.line.Transparency = 1 - a
+                t.line.Visible      = true
+            else
+                t.line.Visible = false
+            end
+            table.insert(alive, t)
+        end
+    end
+    tracerPool = alive
+end
+
+-- wrap fireshot to add tracer
+local _origFireShot = fireshot
+fireshot = function(bp, origin)
+    if ESP.tracers and bp then
+        spawnTracer(origin or (ch and gethrp(ch) and gethrp(ch).Position) or Vector3.zero, bp.Position)
+    end
+    _origFireShot(bp, origin)
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  FEATURE 4 — PREDICTION AIM ASSIST
+--  Velocity-extrapolated targeting fed into fireshot
+--  Does not move your camera — purely modifies the shot destination
+-- ═══════════════════════════════════════════════════════════════════════════════
+local PRED = {
+    enabled   = false,
+    strength  = 0.12,   -- seconds to lead target by
+    teamcheck = true,
+    fov       = 300,    -- screen radius; 0 = infinite
+    priority  = "Closest",
+    part      = "Head",
+}
+
+local predHistory = {}  -- [player] = { pos, tick }
+
+local function getPredictedPart(char, partName)
+    local p = char:FindFirstChild(partName)
+        or char:FindFirstChild("HumanoidRootPart")
+    return p
+end
+
+local function predictedPos(p, pt)
+    local now = tick()
+    local h   = predHistory[p]
+    local pos = pt.Position
+    if h and (now - h.t) > 0 then
+        local vel = (pos - h.pos) / (now - h.t)
+        pos = pos + vel * PRED.strength
+    end
+    predHistory[p] = { pos = pt.Position, t = now }
+    return pos
+end
+
+local predConn = nil
+local function stopPred()
+    if predConn then predConn:Disconnect(); predConn = nil end
+end
+local function startPred()
+    stopPred()
+    predConn = RunService.Heartbeat:Connect(function()
+        if not PRED.enabled then return end
+        local myhrp = ch and gethrp(ch)
+        if not myhrp then return end
+
+        local vp     = cam.ViewportSize
+        local center = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
+        local fov    = PRED.fov
+
+        local enemies = sortedEnemies(PRED.priority, PRED.teamcheck)
+        for _, e in ipairs(enemies) do
+            local pt = getPredictedPart(e.char, PRED.part)
+            if not pt then continue end
+            if fov > 0 then
+                local sp, on = cam:WorldToViewportPoint(pt.Position)
+                if not on then continue end
+                if (Vector2.new(sp.X, sp.Y) - center).Magnitude > fov then continue end
+            end
+            -- just update history so when fireshot fires it leads correctly
+            predictedPos(e.player, pt)
+            break
         end
     end)
 end
 
-function StartKnife()
-    if cfg.knifeMode=="AutoStab" then StartAutoStab()
-    else StartTpStab() end
-end
-
--- ============================================================
--- // MOBILE QUICK BUTTONS
--- ============================================================
-if isMobile then
-    local mbtns = {
-        {lbl="💥", x=-90,  fn=function() cfg.tracerEnabled=not cfg.tracerEnabled end},
-        {lbl="🔄", x=-160, fn=function() cfg.autoReload=not cfg.autoReload end},
-        {lbl="🔪", x=-230, fn=function()
-            cfg.knifeEnabled=not cfg.knifeEnabled
-            if cfg.knifeEnabled then StartKnife() else StopThread("knife") end
-        end},
-    }
-    for _, b in ipairs(mbtns) do
-        local mb = Instance.new("TextButton")
-        mb.Size=UDim2.new(0,55,0,55)
-        mb.Position=UDim2.new(1,b.x,1,-75)
-        mb.BackgroundColor3=COL_PANEL
-        mb.BackgroundTransparency=0.15
-        mb.Text=b.lbl
-        mb.TextSize=24
-        mb.Font=Enum.Font.GothamBold
-        mb.BorderSizePixel=0
-        mb.ZIndex=10
-        mb.Parent=sg
-        Instance.new("UICorner",mb).CornerRadius=UDim.new(1,0)
-        mb.TouchTap:Connect(b.fn)
+-- override fireshot destination when PRED.enabled
+local _origFireShot2 = fireshot
+fireshot = function(bp, origin)
+    if PRED.enabled and bp then
+        local p    = Players:GetPlayerFromCharacter(bp.Parent)
+        local pos  = bp.Position
+        if p then
+            local h = predHistory[p]
+            local now = tick()
+            if h and (now - h.t) > 0 then
+                local vel = (bp.Position - h.pos) / (now - h.t)
+                pos = bp.Position + vel * PRED.strength
+            end
+        end
+        -- create a fake part at predicted position
+        local fake = Instance.new("Part")
+        fake.Anchored   = true
+        fake.CanCollide = false
+        fake.Size       = Vector3.new(0.1,0.1,0.1)
+        fake.CFrame     = CFrame.new(pos)
+        fake.Parent     = Workspace
+        _origFireShot2(fake, origin)
+        fake:Destroy()
+        return
     end
+    _origFireShot2(bp, origin)
 end
 
-print("[FlickScript v3] Loaded — No external UI library needed")
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  BUILD UI
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- ── TELEPORT TAB ─────────────────────────────────────────────────────────────
+local tpLeft  = Tabs.Teleport:AddLeftGroupbox("Teleport Attack",  "zap")
+local tpRight = Tabs.Teleport:AddRightGroupbox("Configuration", "sliders-horizontal")
+
+tpLeft:AddLabel({
+    Text     = "Post-S3: projectiles are dead.\nUse AR / non-projectile weapons only.\nTeleport still works — tp to enemy, shoot, return.",
+    DoesWrap = true,
+})
+
+tpLeft:AddToggle("TPEnabled", {
+    Text    = "Enable Teleport",
+    Default = false,
+    Tooltip = "Enables the teleport attack system",
+    Callback = function(v)
+        TP.enabled = v
+        if v and TP.autoLoop then startTPLoop()
+        elseif not v then stopTPLoop() end
+    end,
+})
+
+tpLeft:AddToggle("TPAutoLoop", {
+    Text    = "Auto-Loop",
+    Default = false,
+    Tooltip = "Continuously teleport and shoot without pressing a key",
+    Callback = function(v)
+        TP.autoLoop = v
+        if TP.enabled and v then startTPLoop()
+        else stopTPLoop() end
+    end,
+})
+
+tpLeft:AddButton({
+    Text       = "Teleport Once",
+    Tooltip    = "Single teleport to nearest enemy",
+    DoubleClick = false,
+    Func        = function()
+        task.spawn(tpAttack)
+    end,
+})
+
+tpLeft:AddDivider()
+
+tpLeft:AddLabel("Keybind to teleport once:")
+    :AddKeyPicker("TPKeybind", {
+        Default = "E",
+        Mode    = "Press",
+        Text    = "Teleport key",
+        Callback = function()
+            if TP.enabled then task.spawn(tpAttack) end
+        end,
+    })
+
+tpRight:AddDropdown("TPTargetMode", {
+    Text    = "Land On",
+    Values  = { "Head", "Legs", "HRP" },
+    Default = "Head",
+    Tooltip = "Where on the enemy to teleport",
+    Callback = function(v) TP.targetMode = v end,
+})
+
+tpRight:AddDropdown("TPPriority", {
+    Text    = "Target Priority",
+    Values  = { "Closest", "LowHP", "HighHP", "Random" },
+    Default = "Closest",
+    Tooltip = "Who to teleport to first",
+    Callback = function(v) TP.priority = v end,
+})
+
+tpRight:AddToggle("TPTeamCheck", {
+    Text    = "Team Check",
+    Default = true,
+    Tooltip = "Skip teammates",
+    Callback = function(v) TP.teamcheck = v end,
+})
+
+tpRight:AddSlider("TPShots", {
+    Text    = "Shots Per Visit",
+    Default = 1,
+    Min     = 1,
+    Max     = 8,
+    Rounding = 0,
+    Tooltip  = "How many shots to fire before returning",
+    Callback = function(v) TP.shots = v end,
+})
+
+tpRight:AddSlider("TPLoopDelay", {
+    Text     = "Loop Delay (s)",
+    Default  = 0.15,
+    Min      = 0.05,
+    Max      = 2,
+    Rounding = 2,
+    Tooltip  = "Seconds between each auto-loop cycle",
+    Callback = function(v) TP.loopDelay = v end,
+})
+
+-- ── ANTI-AIM TAB ─────────────────────────────────────────────────────────────
+local aaLeft  = Tabs.AntiAim:AddLeftGroupbox("Pitch / Underground", "arrow-up-down")
+local aaRight = Tabs.AntiAim:AddRightGroupbox("Yaw", "rotate-cw")
+
+aaLeft:AddLabel({
+    Text     = "Desync: server sees fake angles.\nYour own view is always restored on RenderStepped.",
+    DoesWrap = true,
+})
+
+aaLeft:AddToggle("AAEnabled", {
+    Text    = "Enable Anti-Aim",
+    Default = false,
+    Risky   = true,
+    Callback = function(v)
+        AA.enabled = v
+        if v then startAA() else stopAA() end
+    end,
+})
+
+aaLeft:AddDivider()
+
+aaLeft:AddDropdown("AAPitch", {
+    Text    = "Pitch",
+    Values  = { "Off", "Up", "Zero", "Down", "Glitch", "Random" },
+    Default = "Off",
+    Tooltip = "Off = no pitch change | Glitch = rapid flicker using extreme random values",
+    Callback = function(v)
+        AA.pitch = v
+        if AA.enabled then startAA() end
+    end,
+})
+
+aaLeft:AddDivider()
+
+aaLeft:AddToggle("AAUnderground", {
+    Text    = "Underground",
+    Default = false,
+    Tooltip = "Sinks server hitbox 5 studs into the floor",
+    Callback = function(v)
+        AA.underground = v
+    end,
+})
+
+aaRight:AddDropdown("AAYawBase", {
+    Text    = "Yaw Base",
+    Values  = { "Local", "AtTarget" },
+    Default = "Local",
+    Tooltip = "Local = use your look direction | AtTarget = face nearest enemy first",
+    Callback = function(v)
+        AA.yawBase = v
+        if AA.enabled then startAA() end
+    end,
+})
+
+aaRight:AddDropdown("AAYaw", {
+    Text   = "Yaw Mode",
+    Values = { "Off", "Forward", "Backward", "Spin", "GlitchSpin", "StutterSpin" },
+    Default = "Off",
+    Tooltip = "Spin = 720°/s | GlitchSpin = spin + extreme glitch | StutterSpin = alternating direction",
+    Callback = function(v)
+        AA.yaw   = v
+        aaSpinA  = 0
+        aaStutter = false
+        if AA.enabled then startAA() end
+    end,
+})
+
+aaRight:AddSlider("AAYawAngle", {
+    Text     = "Yaw Angle (°)",
+    Default  = 0,
+    Min      = -180,
+    Max      = 180,
+    Rounding = 0,
+    Tooltip  = "Manual offset added on top of Yaw Mode. -180 = full left, 180 = full right",
+    Callback = function(v)
+        AA.yawAngle = v
+    end,
+})
+
+-- ── ESP TAB ───────────────────────────────────────────────────────────────────
+local espLeft  = Tabs.ESP:AddLeftGroupbox("Visuals",       "eye")
+local espRight = Tabs.ESP:AddRightGroupbox("Tracers",      "activity")
+
+espLeft:AddToggle("ESPBoxes", {
+    Text    = "Boxes",
+    Default = false,
+    Callback = function(v)
+        ESP.boxes = v
+        for p, _ in pairs(espData) do removeESP(p) end
+    end,
+})
+
+espLeft:AddToggle("ESPHealthBar", {
+    Text    = "Health Bars",
+    Default = false,
+    Callback = function(v)
+        ESP.healthbar = v
+        for p, _ in pairs(espData) do removeESP(p) end
+    end,
+})
+
+espLeft:AddToggle("ESPNames", {
+    Text    = "Names",
+    Default = false,
+    Callback = function(v)
+        ESP.names = v
+        for p, _ in pairs(espData) do removeESP(p) end
+    end,
+})
+
+espLeft:AddToggle("ESPTeamCheck", {
+    Text    = "Team Check",
+    Default = true,
+    Callback = function(v) ESP.teamcheck = v end,
+})
+
+espLeft:AddLabel("Box Color")
+    :AddColorPicker("ESPBoxColor", {
+        Default  = Color3.fromRGB(255, 60, 60),
+        Callback = function(v)
+            ESP.boxColor = v
+            for _, d in pairs(espData) do
+                if d.box then d.box.Color3 = v end
+            end
+        end,
+    })
+
+espRight:AddToggle("ESPTracers", {
+    Text    = "Bullet Tracers",
+    Default = false,
+    Callback = function(v)
+        ESP.tracers = v
+        if not v then
+            for _, t in ipairs(tracerPool) do
+                pcall(function() t.line:Remove() end)
+            end
+            tracerPool = {}
+        end
+    end,
+})
+
+espRight:AddSlider("ESPTracerThick", {
+    Text     = "Tracer Thickness",
+    Default  = 1.5,
+    Min      = 0.5,
+    Max      = 5,
+    Rounding = 1,
+    Callback = function(v) ESP.tracerThick = v end,
+})
+
+espRight:AddSlider("ESPTracerDur", {
+    Text     = "Tracer Duration (s)",
+    Default  = 0.3,
+    Min      = 0.05,
+    Max      = 2,
+    Rounding = 2,
+    Callback = function(v) ESP.tracerDur = v end,
+})
+
+espRight:AddLabel("Tracer Color")
+    :AddColorPicker("ESPTracerColor", {
+        Default  = Color3.fromRGB(255, 60, 60),
+        Callback = function(v) ESP.tracerColor = v end,
+    })
+
+-- ── MISC TAB ─────────────────────────────────────────────────────────────────
+local miscLeft  = Tabs.Misc:AddLeftGroupbox("Prediction Aim",  "crosshair")
+local miscRight = Tabs.Misc:AddRightGroupbox("Status",         "info")
+
+miscLeft:AddLabel({
+    Text     = "Velocity prediction — leads the shot destination.\nDoes not move your camera.\nBest paired with Teleport.",
+    DoesWrap = true,
+})
+
+miscLeft:AddToggle("PREDEnabled", {
+    Text    = "Enable Prediction",
+    Default = false,
+    Callback = function(v)
+        PRED.enabled = v
+        if v then startPred() else stopPred() end
+    end,
+})
+
+miscLeft:AddSlider("PREDStrength", {
+    Text     = "Lead Strength (s)",
+    Default  = 0.12,
+    Min      = 0,
+    Max      = 0.6,
+    Rounding = 2,
+    Tooltip  = "How many seconds to lead the target by",
+    Callback = function(v) PRED.strength = v end,
+})
+
+miscLeft:AddDropdown("PREDPriority", {
+    Text    = "Target Priority",
+    Values  = { "Closest", "LowHP", "HighHP", "Random" },
+    Default = "Closest",
+    Callback = function(v) PRED.priority = v end,
+})
+
+miscLeft:AddDropdown("PREDPart", {
+    Text    = "Target Part",
+    Values  = { "Head", "HumanoidRootPart", "UpperTorso" },
+    Default = "Head",
+    Callback = function(v) PRED.part = v end,
+})
+
+miscLeft:AddToggle("PREDTeamCheck", {
+    Text    = "Team Check",
+    Default = true,
+    Callback = function(v) PRED.teamcheck = v end,
+})
+
+miscLeft:AddSlider("PREDFov", {
+    Text     = "FOV (0 = infinite)",
+    Default  = 300,
+    Min      = 0,
+    Max      = 600,
+    Rounding = 0,
+    Callback = function(v) PRED.fov = v end,
+})
+
+-- status labels
+miscRight:AddLabel("Modules:")
+local sl_fig = miscRight:AddLabel("  FighterCtrl: " .. (mFig and "✓" or "⏳"))
+local sl_uti = miscRight:AddLabel("  Utility:     " .. (mUtil and "✓" or "✗"))
+local sl_enu = miscRight:AddLabel("  EnumLib:     " .. (mEnum and "✓" or "✗"))
+local sl_rem = miscRight:AddLabel("  UseItem:     " .. (rUseItem and "✓" or "⏳"))
+
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function() sl_fig:SetText("  FighterCtrl: " .. (mFig     and "✓" or "⏳")) end)
+        pcall(function() sl_uti:SetText("  Utility:     " .. (mUtil    and "✓" or "✗"))  end)
+        pcall(function() sl_enu:SetText("  EnumLib:     " .. (mEnum    and "✓" or "✗"))  end)
+        pcall(function() sl_rem:SetText("  UseItem:     " .. (rUseItem and "✓" or "⏳")) end)
+        if not (mFig and rUseItem) then tryModules() end
+    end
+end)
+
+miscRight:AddDivider()
+miscRight:AddButton({
+    Text    = "Stop All",
+    Tooltip = "Disable every feature at once",
+    Func    = function()
+        TP.enabled   = false; TP.autoLoop = false; stopTPLoop()
+        AA.enabled   = false; stopAA()
+        PRED.enabled = false; stopPred()
+        for p,_ in pairs(espData) do removeESP(p) end
+        for _, t in ipairs(tracerPool) do pcall(function() t.line:Remove() end) end
+        tracerPool = {}
+        Library:Notify({ Title = "rivals.lua", Description = "All features stopped.", Time = 3 })
+    end,
+})
+
+-- ── UI SETTINGS TAB ───────────────────────────────────────────────────────────
+local uiGroup = Tabs.Settings:AddLeftGroupbox("Menu", "wrench")
+
+uiGroup:AddToggle("ShowCursor", {
+    Text    = "Custom Cursor",
+    Default = false,
+    Callback = function(v) Library.ShowCustomCursor = v end,
+})
+
+uiGroup:AddDropdown("NotifSide", {
+    Text    = "Notification Side",
+    Values  = { "Left", "Right" },
+    Default = "Right",
+    Callback = function(v) Library:SetNotifySide(v) end,
+})
+
+uiGroup:AddDivider()
+uiGroup:AddLabel("Menu Keybind")
+    :AddKeyPicker("MenuKeybind", {
+        Default = "RightShift",
+        NoUI    = true,
+        Text    = "Toggle menu",
+    })
+
+uiGroup:AddButton("Unload", function()
+    stopAA(); stopTPLoop(); stopPred()
+    for p,_ in pairs(espData) do removeESP(p) end
+    espFolder:Destroy()
+    Library:Unload()
+end)
+
+Library.ToggleKeybind = Options.MenuKeybind
+
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+SaveManager:IgnoreThemeSettings()
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+ThemeManager:SetFolder("rivals_lua")
+SaveManager:SetFolder("rivals_lua/rivals")
+SaveManager:BuildConfigSection(Tabs.Settings)
+ThemeManager:ApplyToTab(Tabs.Settings)
+SaveManager:LoadAutoloadConfig()
+
+-- ── MAIN LOOP ─────────────────────────────────────────────────────────────────
+RunService.RenderStepped:Connect(function()
+    cam = Workspace.CurrentCamera
+    updateTracers()
+    updateESPFrame()
+end)
+
+Library:Notify({
+    Title       = "rivals.lua",
+    Description = "post-s3 // use AR / non-projectile\nTP + AA + ESP + Prediction loaded",
+    Time        = 6,
+})
