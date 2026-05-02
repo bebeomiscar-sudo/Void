@@ -2,21 +2,22 @@
     rivals.lua
     HvH utility — post-season3 patch (projectiles dead, use AR/non-projectile)
     teleport-based aggression + anti-aim + esp + prediction + void desync
+    + weapon detection + void loop teleport + improved head landing
 ]]
 
-local Players   = cloneref(game:GetService("Players"))
-local RunService = cloneref(game:GetService("RunService"))
-local UserInputService = cloneref(game:GetService("UserInputService"))
+local Players           = cloneref(game:GetService("Players"))
+local RunService        = cloneref(game:GetService("RunService"))
+local UserInputService  = cloneref(game:GetService("UserInputService"))
 local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
-local Workspace = cloneref(game:GetService("Workspace"))
-local TweenService = cloneref(game:GetService("TweenService"))
+local Workspace         = cloneref(game:GetService("Workspace"))
+local TweenService      = cloneref(game:GetService("TweenService"))
 
 local lp  = Players.LocalPlayer
 local cam = Workspace.CurrentCamera
 
 -- ── lib ──────────────────────────────────────────────────────────────────────
-local repo    = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
-local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local repo         = "https://raw.githubusercontent.com/deividcomsono/Obsidian/main/"
+local Library      = loadstring(game:HttpGet(repo .. "Library.lua"))()
 local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
 local SaveManager  = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
 
@@ -26,9 +27,9 @@ local Toggles = Library.Toggles
 Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
-    Title          = "rivals.lua",
-    Footer         = "post-s3 // non-projectile only",
-    NotifySide     = "Right",
+    Title            = "rivals.lua",
+    Footer           = "post-s3 // non-projectile only",
+    NotifySide       = "Right",
     ShowCustomCursor = false,
 })
 
@@ -84,7 +85,6 @@ local hrp = ch:FindFirstChild("HumanoidRootPart")
 lp.CharacterAdded:Connect(function(c)
     ch  = c
     hrp = c:WaitForChild("HumanoidRootPart")
-    -- reset void desync on respawn
     pcall(function()
         if VD then
             stopVoidDesync()
@@ -118,7 +118,114 @@ local function gethrp(char)
     return char and char:FindFirstChild("HumanoidRootPart")
 end
 
--- fire a shot at bp using the currently equipped item
+-- ═══════════════════════════════════════════════════════════════════════════════
+--  WEAPON DETECTION
+--  Checks what weapon an enemy is holding and adjusts hitbox/behaviour
+--  Weapons: AssaultRifle, Sniper, Fist, Spear, Knife, Maul, Katana
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- weapon range table — how far each weapon can hit you
+local WEAPON_RANGES = {
+    AssaultRifle = 200,
+    Sniper       = 500,
+    Fist         = 8,
+    Spear        = 18,   -- spear has a longer melee reach
+    Knife        = 10,
+    Maul         = 12,
+    Katana       = 14,
+}
+
+-- hitbox size offsets per weapon — used to expand landing offset so you stay outside their reach
+-- positive Y = land higher above them, positive XZ = stay further away horizontally
+local WEAPON_HITBOX = {
+    AssaultRifle = { yOffset = 3.2,  danger = false },
+    Sniper       = { yOffset = 3.2,  danger = false },
+    Fist         = { yOffset = 3.2,  danger = false },
+    Spear        = { yOffset = 6.5,  danger = true  }, -- spear hitbox is tall, go higher
+    Knife        = { yOffset = 3.2,  danger = false },
+    Maul         = { yOffset = 4.0,  danger = true  }, -- maul has wide hitbox
+    Katana       = { yOffset = 4.5,  danger = true  }, -- katana sweep is tall
+}
+
+local WD = {
+    enabled       = true,
+    lastWeapon    = {},   -- [player] = weaponName string
+    statusLabel   = nil,
+    adjustTP      = true, -- let weapon detection adjust teleport landing height
+}
+
+-- try to read what weapon a fighter has equipped
+local function getPlayerWeapon(p)
+    local weaponName = "Unknown"
+    pcall(function()
+        local lf = nil
+        -- try via FighterController for remote players
+        local fighters = ReplicatedStorage:FindFirstChild("Fighters")
+        if fighters then
+            local fobj = fighters:FindFirstChild(p.Name)
+                or fighters:FindFirstChild(tostring(p.UserId))
+            if fobj then
+                local equipped = fobj:FindFirstChild("EquippedItem")
+                    or fobj:FindFirstChild("Weapon")
+                    or fobj:FindFirstChild("Item")
+                if equipped then
+                    weaponName = equipped.Value or equipped.Name or "Unknown"
+                end
+            end
+        end
+    end)
+
+    -- fallback: scan character for tool/weapon model name
+    if weaponName == "Unknown" then
+        pcall(function()
+            local c = p.Character
+            if not c then return end
+            for _, v in ipairs(c:GetChildren()) do
+                local n = v.Name
+                for wname, _ in pairs(WEAPON_RANGES) do
+                    if string.find(string.lower(n), string.lower(wname)) then
+                        weaponName = wname
+                        return
+                    end
+                end
+            end
+            -- also check string attributes
+            for _, attr in ipairs({"Weapon", "EquippedWeapon", "WeaponID", "ItemName"}) do
+                local val = c:GetAttribute(attr)
+                if val then
+                    for wname, _ in pairs(WEAPON_RANGES) do
+                        if string.find(string.lower(tostring(val)), string.lower(wname)) then
+                            weaponName = wname
+                            return
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    WD.lastWeapon[p] = weaponName
+    return weaponName
+end
+
+-- returns how high above the enemy head we should land based on their weapon
+local function getWeaponHeadOffset(p)
+    if not WD.enabled or not WD.adjustTP then return 3.2 end
+    local w = WD.lastWeapon[p] or getPlayerWeapon(p)
+    local info = WEAPON_HITBOX[w]
+    if info then return info.yOffset end
+    return 3.2
+end
+
+-- returns true if the enemy weapon is flagged as dangerous (long/wide hitbox)
+local function isWeaponDangerous(p)
+    if not WD.enabled then return false end
+    local w = WD.lastWeapon[p] or getPlayerWeapon(p)
+    local info = WEAPON_HITBOX[w]
+    return info and info.danger or false
+end
+
+-- ── fire a shot at bp ─────────────────────────────────────────────────────────
 local function fireshot(bp, origin)
     if not mUtil or not mEnum or not rUseItem then return end
     local lf = nil
@@ -129,7 +236,7 @@ local function fireshot(bp, origin)
     local oid = nil
     pcall(function() oid = item:Get("ObjectID") end)
     if not oid then return end
-    local org   = origin or (ch and gethrp(ch) and gethrp(ch).Position + Vector3.new(0,1.5,0)) or Vector3.zero
+    local org   = origin or (ch and gethrp(ch) and gethrp(ch).Position + Vector3.new(0, 1.5, 0)) or Vector3.zero
     local aimCF = CFrame.lookAt(org, bp.Position)
     local sd    = {}
     pcall(function()
@@ -146,7 +253,7 @@ local function fireshot(bp, origin)
     end)
 end
 
--- find closest enemy, optionally skip team
+-- find closest enemy
 local function closestEnemy(teamcheck)
     local myhrp = ch and gethrp(ch)
     if not myhrp then return nil, nil end
@@ -181,9 +288,9 @@ local function sortedEnemies(mode, teamcheck)
             hp     = hm and hm.Health or 0,
         })
     end
-    if     mode == "Closest" then table.sort(list, function(a,b) return a.dist < b.dist end)
-    elseif mode == "LowHP"   then table.sort(list, function(a,b) return a.hp   < b.hp   end)
-    elseif mode == "HighHP"  then table.sort(list, function(a,b) return a.hp   > b.hp   end)
+    if     mode == "Closest" then table.sort(list, function(a, b) return a.dist < b.dist end)
+    elseif mode == "LowHP"   then table.sort(list, function(a, b) return a.hp   < b.hp   end)
+    elseif mode == "HighHP"  then table.sort(list, function(a, b) return a.hp   > b.hp   end)
     elseif mode == "Random"  then
         for i = #list, 2, -1 do
             local j = math.random(i)
@@ -195,17 +302,52 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 1 — TELEPORT ATTACK
+--  + void loop: tp into void N times before returning (slider 0-30)
+--  + weapon-aware head landing height
 -- ═══════════════════════════════════════════════════════════════════════════════
 local TP = {
-    enabled    = false,
-    targetMode = "Head",
-    priority   = "Closest",
-    teamcheck  = true,
-    autoLoop   = false,
-    loopDelay  = 0.15,
-    shots      = 1,
-    running    = false,
+    enabled      = false,
+    targetMode   = "Head",
+    priority     = "Closest",
+    teamcheck    = true,
+    autoLoop     = false,
+    loopDelay    = 0.15,
+    shots        = 1,
+    running      = false,
+    -- void loop
+    voidLoops    = 0,      -- 0 = disabled, 1-30 = how many void tps before returning
+    voidLoopDesc = nil,    -- label ref
 }
+
+-- void loop descriptions shown next to slider
+local VOID_LOOP_DESC = {
+    [0]  = "0 — Disabled: teleport straight to enemy",
+    [1]  = "1 — Flash: void once then attack",
+    [5]  = "5 — Stutter: void 5x to confuse then attack",
+    [10] = "10 — Ghost: void 10x before appearing",
+    [20] = "20 — Phantom: void 20x, very hard to track",
+    [30] = "30 — Wraith: full 30 void jumps, maximum confusion",
+}
+
+local function getVoidLoopDesc(v)
+    if v == 0  then return VOID_LOOP_DESC[0]  end
+    if v <= 3  then return VOID_LOOP_DESC[1]  end
+    if v <= 8  then return VOID_LOOP_DESC[5]  end
+    if v <= 15 then return VOID_LOOP_DESC[10] end
+    if v <= 25 then return VOID_LOOP_DESC[20] end
+    return VOID_LOOP_DESC[30]
+end
+
+-- teleport HRP to a random void position
+local function tpToVoid(myhrp)
+    pcall(function()
+        myhrp.CFrame = CFrame.new(
+            math.random(-2147483000, 2147483000),
+            math.random(-2147483000, 2147483000),
+            math.random(-2147483000, 2147483000)
+        )
+    end)
+end
 
 local function tpAttack()
     if TP.running then return end
@@ -216,13 +358,22 @@ local function tpAttack()
     if #enemies == 0 then return end
     local target = enemies[1]
     local tc     = target.char
+    local tp     = target.player
 
     local savedCF = myhrp.CFrame
+
+    -- ── weapon-aware head offset ────────────────────────────────────────────
+    local headOffset = getWeaponHeadOffset(tp)
+    -- if dangerous weapon: add extra clearance above their head
+    if isWeaponDangerous(tp) and TP.targetMode == "Head" then
+        headOffset = headOffset + 1.5
+    end
 
     local landPos
     if TP.targetMode == "Head" then
         local head = tc:FindFirstChild("Head")
-        landPos = (head and head.Position or target.hrp.Position) + Vector3.new(0, 3.2, 0)
+        -- improved: land above head by weapon-aware offset so you don't get hit
+        landPos = (head and head.Position or target.hrp.Position) + Vector3.new(0, headOffset, 0)
     elseif TP.targetMode == "Legs" then
         landPos = target.hrp.Position - Vector3.new(0, 2.8, 0)
     else
@@ -231,10 +382,23 @@ local function tpAttack()
 
     TP.running = true
 
+    -- ── void loop phase ─────────────────────────────────────────────────────
+    -- tp into the void N times to disorient the enemy / their script
+    -- then snap to the real landing position
+    if TP.voidLoops > 0 then
+        for i = 1, TP.voidLoops do
+            tpToVoid(myhrp)
+            task.wait(0.02)   -- short pause each void jump
+        end
+    end
+
+    -- ── land on enemy ────────────────────────────────────────────────────────
     pcall(function() myhrp.CFrame = CFrame.new(landPos) end)
     task.wait(0.04)
 
-    local bp = tc:FindFirstChild("HumanoidRootPart") or tc:FindFirstChild("UpperTorso") or tc:FindFirstChild("Head")
+    local bp = tc:FindFirstChild("HumanoidRootPart")
+        or tc:FindFirstChild("UpperTorso")
+        or tc:FindFirstChild("Head")
     if bp then
         for i = 1, math.max(TP.shots, 1) do
             if i > 1 then task.wait(0.04) end
@@ -284,10 +448,10 @@ local aaHB      = nil
 local aaRS      = nil
 
 local function betterRandom(mi, ma, dmi, dma)
-    local v = math.random(mi, ma)
+    local v     = math.random(mi, ma)
     local guard = 0
     repeat
-        v = math.random(mi, ma)
+        v     = math.random(mi, ma)
         guard = guard + 1
     until (v < dmi or v > dma) or guard > 30
     return v
@@ -315,7 +479,7 @@ local function buildAAFrame(dt)
         if tc then
             local eh = gethrp(tc)
             if eh then
-                local dir = (eh.Position - base.Position) * Vector3.new(1,0,1)
+                local dir = (eh.Position - base.Position) * Vector3.new(1, 0, 1)
                 if dir.Magnitude > 0.01 then
                     baseYaw = math.atan2(-dir.X, -dir.Z)
                 end
@@ -324,16 +488,16 @@ local function buildAAFrame(dt)
     end
 
     local yoff = math.rad(AA.yawAngle)
-    if     AA.yaw == "Forward"    then yoff = yoff + 0
-    elseif AA.yaw == "Backward"   then yoff = yoff + math.pi
-    elseif AA.yaw == "Spin"       then aaSpinA = aaSpinA + dt * math.rad(720); yoff = yoff + aaSpinA
-    elseif AA.yaw == "GlitchSpin" then
+    if     AA.yaw == "Forward"     then yoff = yoff + 0
+    elseif AA.yaw == "Backward"    then yoff = yoff + math.pi
+    elseif AA.yaw == "Spin"        then aaSpinA = aaSpinA + dt * math.rad(720); yoff = yoff + aaSpinA
+    elseif AA.yaw == "GlitchSpin"  then
         aaSpinA = aaSpinA + dt * math.rad(1440)
-        yoff = yoff + aaSpinA + math.rad(betterRandom(-180, 180, -15, 15))
+        yoff    = yoff + aaSpinA + math.rad(betterRandom(-180, 180, -15, 15))
     elseif AA.yaw == "StutterSpin" then
         aaStutter = not aaStutter
-        aaSpinA = aaStutter and (aaSpinA + dt * math.rad(720)) or (aaSpinA - dt * math.rad(360))
-        yoff = yoff + aaSpinA
+        aaSpinA   = aaStutter and (aaSpinA + dt * math.rad(720)) or (aaSpinA - dt * math.rad(360))
+        yoff      = yoff + aaSpinA
     end
 
     return CFrame.new(pos) * CFrame.fromEulerAnglesYXZ(pitch, baseYaw + yoff, 0)
@@ -401,12 +565,13 @@ end
 --  FEATURE 3 — ESP
 -- ═══════════════════════════════════════════════════════════════════════════════
 local ESP = {
-    boxes      = false,
-    healthbar  = false,
-    names      = false,
-    tracers    = false,
-    teamcheck  = true,
-    boxColor   = Color3.fromRGB(255, 60, 60),
+    boxes       = false,
+    healthbar   = false,
+    names       = false,
+    tracers     = false,
+    teamcheck   = true,
+    weaponTag   = true,   -- show weapon name above head
+    boxColor    = Color3.fromRGB(255, 60, 60),
     tracerColor = Color3.fromRGB(255, 60, 60),
     tracerThick = 1.5,
     tracerDur   = 0.3,
@@ -444,37 +609,57 @@ local function buildESP(p)
         d.box = b
     end
 
-    if ESP.healthbar or ESP.names then
+    if ESP.healthbar or ESP.names or ESP.weaponTag then
         local bb = Instance.new("BillboardGui")
-        bb.Size            = UDim2.new(0, 120, 0, 40)
-        bb.StudsOffset     = Vector3.new(0, 3.2, 0)
-        bb.AlwaysOnTop     = true
-        bb.Adornee         = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
-        bb.Parent          = espFolder
+        bb.Size        = UDim2.new(0, 140, 0, 56)
+        bb.StudsOffset = Vector3.new(0, 3.2, 0)
+        bb.AlwaysOnTop = true
+        bb.Adornee     = c:FindFirstChild("Head") or c:FindFirstChild("HumanoidRootPart")
+        bb.Parent      = espFolder
+
+        local rowY = 0
 
         if ESP.names then
             local lbl = Instance.new("TextLabel", bb)
-            lbl.Size                = UDim2.new(1, 0, 0.5, 0)
+            lbl.Size                   = UDim2.new(1, 0, 0, 16)
+            lbl.Position               = UDim2.new(0, 0, 0, rowY)
             lbl.BackgroundTransparency = 1
-            lbl.TextColor3          = Color3.fromRGB(255,255,255)
+            lbl.TextColor3             = Color3.fromRGB(255, 255, 255)
             lbl.TextStrokeTransparency = 0.4
-            lbl.Font                = Enum.Font.GothamBold
-            lbl.TextScaled          = true
-            lbl.Text                = p.Name
+            lbl.Font                   = Enum.Font.GothamBold
+            lbl.TextScaled             = true
+            lbl.Text                   = p.Name
             d.namelbl = lbl
+            rowY = rowY + 18
+        end
+
+        -- weapon tag label: shows current weapon + danger indicator
+        if ESP.weaponTag then
+            local wlbl = Instance.new("TextLabel", bb)
+            wlbl.Size                   = UDim2.new(1, 0, 0, 14)
+            wlbl.Position               = UDim2.new(0, 0, 0, rowY)
+            wlbl.BackgroundTransparency = 1
+            wlbl.TextColor3             = Color3.fromRGB(255, 220, 80)
+            wlbl.TextStrokeTransparency = 0.5
+            wlbl.Font                   = Enum.Font.Gotham
+            wlbl.TextScaled             = true
+            wlbl.Text                   = "[ ? ]"
+            d.weaponlbl = wlbl
+            d.weaponplr = p
+            rowY = rowY + 16
         end
 
         if ESP.healthbar then
-            local hm = c:FindFirstChildOfClass("Humanoid")
+            local hm  = c:FindFirstChildOfClass("Humanoid")
             local bar = Instance.new("Frame", bb)
-            bar.Size              = UDim2.new(1, 0, 0.35, 0)
-            bar.Position          = UDim2.new(0, 0, 0.6, 0)
-            bar.BackgroundColor3  = Color3.fromRGB(30,30,30)
-            bar.BorderSizePixel   = 0
+            bar.Size             = UDim2.new(1, 0, 0, 10)
+            bar.Position         = UDim2.new(0, 0, 0, rowY)
+            bar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+            bar.BorderSizePixel  = 0
             local fill = Instance.new("Frame", bar)
             fill.BackgroundColor3 = Color3.fromRGB(80, 220, 80)
             fill.BorderSizePixel  = 0
-            fill.Size = UDim2.new(hm and (hm.Health / math.max(hm.MaxHealth,1)) or 1, 0, 1, 0)
+            fill.Size             = UDim2.new(hm and (hm.Health / math.max(hm.MaxHealth, 1)) or 1, 0, 1, 0)
             d.healthfill = fill
             d.healthhm   = hm
         end
@@ -500,10 +685,24 @@ local function updateESPFrame()
         if not d then
             buildESP(p); d = espData[p]
         end
-        if d and d.healthfill and d.healthhm then
-            local pct = math.clamp(d.healthhm.Health / math.max(d.healthhm.MaxHealth,1), 0, 1)
-            d.healthfill.Size = UDim2.new(pct, 0, 1, 0)
-            d.healthfill.BackgroundColor3 = Color3.fromHSV(pct * 0.33, 0.9, 0.9)
+        if d then
+            -- health bar update
+            if d.healthfill and d.healthhm then
+                local pct = math.clamp(d.healthhm.Health / math.max(d.healthhm.MaxHealth, 1), 0, 1)
+                d.healthfill.Size             = UDim2.new(pct, 0, 1, 0)
+                d.healthfill.BackgroundColor3 = Color3.fromHSV(pct * 0.33, 0.9, 0.9)
+            end
+            -- weapon tag update
+            if d.weaponlbl and d.weaponplr then
+                local w    = getPlayerWeapon(d.weaponplr)
+                local isDanger = isWeaponDangerous(d.weaponplr)
+                local range = WEAPON_RANGES[w] or 0
+                local tag = "[" .. w .. " | " .. range .. "u" .. (isDanger and " ⚠" or "") .. "]"
+                d.weaponlbl.Text      = tag
+                d.weaponlbl.TextColor3 = isDanger
+                    and Color3.fromRGB(255, 80, 80)
+                    or  Color3.fromRGB(255, 220, 80)
+            end
         end
     end
 end
@@ -515,7 +714,7 @@ local function spawnTracer(from3, to3)
     l.Color        = ESP.tracerColor
     l.Transparency = 0
     l.Visible      = false
-    table.insert(tracerPool, { line=l, born=tick(), from=from3, to=to3 })
+    table.insert(tracerPool, { line = l, born = tick(), from = from3, to = to3 })
 end
 
 local function w2s(p3)
@@ -553,7 +752,10 @@ end
 local _origFireShot = fireshot
 fireshot = function(bp, origin)
     if ESP.tracers and bp then
-        spawnTracer(origin or (ch and gethrp(ch) and gethrp(ch).Position) or Vector3.zero, bp.Position)
+        spawnTracer(
+            origin or (ch and gethrp(ch) and gethrp(ch).Position) or Vector3.zero,
+            bp.Position
+        )
     end
     _origFireShot(bp, origin)
 end
@@ -573,9 +775,7 @@ local PRED = {
 local predHistory = {}
 
 local function getPredictedPart(char, partName)
-    local p = char:FindFirstChild(partName)
-        or char:FindFirstChild("HumanoidRootPart")
-    return p
+    return char:FindFirstChild(partName) or char:FindFirstChild("HumanoidRootPart")
 end
 
 local function predictedPos(p, pt)
@@ -600,11 +800,9 @@ local function startPred()
         if not PRED.enabled then return end
         local myhrp = ch and gethrp(ch)
         if not myhrp then return end
-
         local vp     = cam.ViewportSize
         local center = Vector2.new(vp.X * 0.5, vp.Y * 0.5)
         local fov    = PRED.fov
-
         local enemies = sortedEnemies(PRED.priority, PRED.teamcheck)
         for _, e in ipairs(enemies) do
             local pt = getPredictedPart(e.char, PRED.part)
@@ -623,10 +821,10 @@ end
 local _origFireShot2 = fireshot
 fireshot = function(bp, origin)
     if PRED.enabled and bp then
-        local p    = Players:GetPlayerFromCharacter(bp.Parent)
-        local pos  = bp.Position
+        local p   = Players:GetPlayerFromCharacter(bp.Parent)
+        local pos = bp.Position
         if p then
-            local h = predHistory[p]
+            local h   = predHistory[p]
             local now = tick()
             if h and (now - h.t) > 0 then
                 local vel = (bp.Position - h.pos) / (now - h.t)
@@ -636,7 +834,7 @@ fireshot = function(bp, origin)
         local fake = Instance.new("Part")
         fake.Anchored   = true
         fake.CanCollide = false
-        fake.Size       = Vector3.new(0.1,0.1,0.1)
+        fake.Size       = Vector3.new(0.1, 0.1, 0.1)
         fake.CFrame     = CFrame.new(pos)
         fake.Parent     = Workspace
         _origFireShot2(fake, origin)
@@ -648,8 +846,6 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 5 — VOID DESYNC
---  Auto-enables when enemy HP > your HP, level controls intensity
---  0 = Off | 1 = Mild | 2 = Medium | 3 = Hard | 4 = Extreme
 -- ═══════════════════════════════════════════════════════════════════════════════
 local VD = {
     enabled     = false,
@@ -697,30 +893,20 @@ local function buildVoidFrame(level)
     local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
     if not myhrp then return nil end
     if level == 0 then return nil end
-
     local base = VD.savedCF or myhrp.CFrame
     local pos  = base.Position
 
     if level == 1 then
-        -- Mild: sink hitbox 8 studs underground, no horizontal change
         return CFrame.new(pos - Vector3.new(0, 8, 0))
-
     elseif level == 2 then
-        -- Medium: underground + small random XZ jitter to confuse resolver
-        local jx = math.random(-3, 3)
-        local jz = math.random(-3, 3)
-        return CFrame.new(pos.X + jx, pos.Y - 8, pos.Z + jz)
-
+        return CFrame.new(pos.X + math.random(-3, 3), pos.Y - 8, pos.Z + math.random(-3, 3))
     elseif level == 3 then
-        -- Hard: teleport hitbox thousands of studs away + underground
         return CFrame.new(
             pos.X + math.random(-5000, 5000),
             pos.Y - 8,
             pos.Z + math.random(-5000, 5000)
         )
-
     elseif level == 4 then
-        -- Extreme: full void coordinates, random angles, maximum chaos
         return CFrame.new(
             math.random(-2147483000, 2147483000),
             math.random(-2147483000, 2147483000),
@@ -731,7 +917,6 @@ local function buildVoidFrame(level)
             math.random() * math.pi * 2
         )
     end
-
     return nil
 end
 
@@ -760,29 +945,19 @@ local function startVoidDesync()
     if VD.level == 0 then return end
     local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
     if not myhrp then return end
-
     VD.active = true
 
-    -- Heartbeat: push fake position to server every frame
     VD.hbConn = RunService.Heartbeat:Connect(function()
-        if not VD.active or VD.level == 0 then
-            stopVoidDesync(); return
-        end
+        if not VD.active or VD.level == 0 then stopVoidDesync(); return end
         local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
         if not hrp then return end
-
-        -- always save real CFrame before modifying
         VD.savedCF = hrp.CFrame
         VD.savedLV = hrp.AssemblyLinearVelocity
         VD.savedAV = hrp.AssemblyAngularVelocity
-
         local fake = buildVoidFrame(VD.level)
-        if fake then
-            pcall(function() hrp.CFrame = fake end)
-        end
+        if fake then pcall(function() hrp.CFrame = fake end) end
     end)
 
-    -- RenderStepped: restore your real position so your screen never breaks
     RunService:BindToRenderStep("vd_sync", Enum.RenderPriority.First.Value, function()
         if not VD.active then return end
         local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
@@ -795,11 +970,7 @@ local function startVoidDesync()
     end)
     VD.rsConn = true
 
-    Library:Notify({
-        Title       = "Void Desync",
-        Description = "Activated — Level " .. VD.level,
-        Time        = 3,
-    })
+    Library:Notify({ Title = "Void Desync", Description = "Activated — Level " .. VD.level, Time = 3 })
 end
 
 local function startVDAutoCheck()
@@ -811,23 +982,12 @@ local function startVDAutoCheck()
             return
         end
         if not VD.autoTrigger then return end
-
         local myHP    = getMyHP()
         local enemyHP = getBestEnemyHP()
-
-        -- losing: enemy has more HP → activate desync
-        if enemyHP > myHP and not VD.active then
-            startVoidDesync()
-        end
-
-        -- winning: our HP is >= enemy HP → deactivate desync
+        if enemyHP > myHP and not VD.active then startVoidDesync() end
         if myHP >= enemyHP and VD.active then
             stopVoidDesync()
-            Library:Notify({
-                Title       = "Void Desync",
-                Description = "Deactivated — you are winning now",
-                Time        = 2,
-            })
+            Library:Notify({ Title = "Void Desync", Description = "Deactivated — you are winning now", Time = 2 })
         end
     end)
 end
@@ -847,7 +1007,7 @@ local tpLeft  = Tabs.Teleport:AddLeftGroupbox("Teleport Attack", "zap")
 local tpRight = Tabs.Teleport:AddRightGroupbox("Configuration",  "sliders-horizontal")
 
 tpLeft:AddLabel({
-    Text     = "Post-S3: projectiles are dead.\nUse AR / non-projectile weapons only.\nTeleport still works — tp to enemy, shoot, return.",
+    Text     = "Post-S3: projectiles are dead.\nUse AR / non-projectile weapons only.\nVoid Loop: tp into void N times before landing on enemy.",
     DoesWrap = true,
 })
 
@@ -877,9 +1037,7 @@ tpLeft:AddButton({
     Text        = "Teleport Once",
     Tooltip     = "Single teleport to nearest enemy",
     DoubleClick = false,
-    Func        = function()
-        task.spawn(tpAttack)
-    end,
+    Func        = function() task.spawn(tpAttack) end,
 })
 
 tpLeft:AddDivider()
@@ -894,11 +1052,34 @@ tpLeft:AddLabel("Keybind to teleport once:")
         end,
     })
 
+tpLeft:AddDivider()
+
+-- void loop slider
+tpLeft:AddLabel({
+    Text     = "Void Loop: teleport into void N times\nbefore landing on the enemy, then repeat.\n0 = disabled.",
+    DoesWrap = true,
+})
+
+local voidLoopDescLabel = tpLeft:AddLabel(getVoidLoopDesc(0))
+
+tpLeft:AddSlider("TPVoidLoops", {
+    Text     = "Void Loop Count",
+    Default  = 0,
+    Min      = 0,
+    Max      = 30,
+    Rounding = 0,
+    Tooltip  = "0=Off | 1=Flash | ~5=Stutter | ~10=Ghost | ~20=Phantom | 30=Wraith",
+    Callback = function(v)
+        TP.voidLoops = v
+        pcall(function() voidLoopDescLabel:SetText(getVoidLoopDesc(v)) end)
+    end,
+})
+
 tpRight:AddDropdown("TPTargetMode", {
     Text    = "Land On",
     Values  = { "Head", "Legs", "HRP" },
     Default = "Head",
-    Tooltip = "Where on the enemy to teleport",
+    Tooltip = "Head = above their head (weapon-adjusted height so you don't get hit)",
     Callback = function(v) TP.targetMode = v end,
 })
 
@@ -975,9 +1156,7 @@ aaLeft:AddToggle("AAUnderground", {
     Text    = "Underground",
     Default = false,
     Tooltip = "Sinks server hitbox 5 studs into the floor",
-    Callback = function(v)
-        AA.underground = v
-    end,
+    Callback = function(v) AA.underground = v end,
 })
 
 aaRight:AddDropdown("AAYawBase", {
@@ -1010,15 +1189,13 @@ aaRight:AddSlider("AAYawAngle", {
     Min      = -180,
     Max      = 180,
     Rounding = 0,
-    Tooltip  = "Manual offset added on top of Yaw Mode. -180 = full left, 180 = full right",
-    Callback = function(v)
-        AA.yawAngle = v
-    end,
+    Tooltip  = "Manual offset added on top of Yaw Mode",
+    Callback = function(v) AA.yawAngle = v end,
 })
 
 -- ── ESP TAB ───────────────────────────────────────────────────────────────────
-local espLeft  = Tabs.ESP:AddLeftGroupbox("Visuals", "eye")
-local espRight = Tabs.ESP:AddRightGroupbox("Tracers", "activity")
+local espLeft  = Tabs.ESP:AddLeftGroupbox("Visuals",     "eye")
+local espRight = Tabs.ESP:AddRightGroupbox("Tracers",    "activity")
 
 espLeft:AddToggle("ESPBoxes", {
     Text    = "Boxes",
@@ -1047,6 +1224,16 @@ espLeft:AddToggle("ESPNames", {
     end,
 })
 
+espLeft:AddToggle("ESPWeaponTag", {
+    Text    = "Weapon Tag",
+    Default = true,
+    Tooltip = "Show enemy weapon name + range + danger warning above their head",
+    Callback = function(v)
+        ESP.weaponTag = v
+        for p, _ in pairs(espData) do removeESP(p) end
+    end,
+})
+
 espLeft:AddToggle("ESPTeamCheck", {
     Text    = "Team Check",
     Default = true,
@@ -1070,9 +1257,7 @@ espRight:AddToggle("ESPTracers", {
     Callback = function(v)
         ESP.tracers = v
         if not v then
-            for _, t in ipairs(tracerPool) do
-                pcall(function() t.line:Remove() end)
-            end
+            for _, t in ipairs(tracerPool) do pcall(function() t.line:Remove() end) end
             tracerPool = {}
         end
     end,
@@ -1106,7 +1291,6 @@ espRight:AddLabel("Tracer Color")
 local miscLeft  = Tabs.Misc:AddLeftGroupbox("Prediction Aim", "crosshair")
 local miscRight = Tabs.Misc:AddRightGroupbox("Void Desync",   "shield-off")
 
--- Prediction left side
 miscLeft:AddLabel({
     Text     = "Velocity prediction — leads the shot destination.\nDoes not move your camera.\nBest paired with Teleport.",
     DoesWrap = true,
@@ -1162,6 +1346,43 @@ miscLeft:AddSlider("PREDFov", {
 
 miscLeft:AddDivider()
 
+-- weapon detection section
+miscLeft:AddLabel("── Weapon Detection ──")
+
+miscLeft:AddToggle("WDEnabled", {
+    Text    = "Enable Weapon Detection",
+    Default = true,
+    Tooltip = "Scan enemy weapon and adjust teleport height + show weapon in ESP",
+    Callback = function(v) WD.enabled = v end,
+})
+
+miscLeft:AddToggle("WDAdjustTP", {
+    Text    = "Auto-Adjust TP Height",
+    Default = true,
+    Tooltip = "Automatically land higher when enemy has Spear/Maul/Katana",
+    Callback = function(v) WD.adjustTP = v end,
+})
+
+-- live nearest enemy weapon readout
+local wdReadout = miscLeft:AddLabel("Nearest: —")
+task.spawn(function()
+    while task.wait(0.5) do
+        pcall(function()
+            local p, _ = closestEnemy(true)
+            if p then
+                local w = getPlayerWeapon(p)
+                local r = WEAPON_RANGES[w] or 0
+                local danger = isWeaponDangerous(p) and " ⚠ DANGER" or ""
+                wdReadout:SetText("Nearest: " .. p.Name .. "\nWeapon: " .. w .. " (" .. r .. "u)" .. danger)
+            else
+                wdReadout:SetText("Nearest: no enemy")
+            end
+        end)
+    end
+end)
+
+miscLeft:AddDivider()
+
 miscLeft:AddLabel("Modules:")
 local sl_fig = miscLeft:AddLabel("  FighterCtrl: " .. (mFig     and "✓" or "⏳"))
 local sl_uti = miscLeft:AddLabel("  Utility:     " .. (mUtil    and "✓" or "✗"))
@@ -1195,7 +1416,7 @@ miscLeft:AddButton({
     end,
 })
 
--- Void Desync right side
+-- void desync right side
 miscRight:AddLabel({
     Text     = "Auto-enables when enemy HP > your HP.\nWait until you are winning — it disables itself.\nHigher level = harder to hit you.",
     DoesWrap = true,
@@ -1208,11 +1429,7 @@ miscRight:AddToggle("VDEnabled", {
     Tooltip = "Master toggle for the void desync system",
     Callback = function(v)
         VD.enabled = v
-        if v then
-            startVDAutoCheck()
-        else
-            stopVDAll()
-        end
+        if v then startVDAutoCheck() else stopVDAll() end
     end,
 })
 
@@ -1220,9 +1437,7 @@ miscRight:AddToggle("VDAutoTrigger", {
     Text    = "Auto-Trigger (HP Check)",
     Default = true,
     Tooltip = "Automatically activate desync when enemy HP is higher than yours",
-    Callback = function(v)
-        VD.autoTrigger = v
-    end,
+    Callback = function(v) VD.autoTrigger = v end,
 })
 
 miscRight:AddDivider()
@@ -1266,18 +1481,14 @@ miscRight:AddSlider("VDLevel", {
         if vdLevelLabel then
             pcall(function() vdLevelLabel:SetText(VD_LEVEL_DESC[v] or "") end)
         end
-        if v == 0 and VD.active then
-            stopVoidDesync()
-        end
+        if v == 0 and VD.active then stopVoidDesync() end
     end,
 })
 
--- live description label updated by slider
 vdLevelLabel = miscRight:AddLabel(VD_LEVEL_DESC[0])
 
 miscRight:AddDivider()
 
--- live HP + status readout
 vdStatusLabel = miscRight:AddLabel("Status: Disabled")
 
 task.spawn(function()
@@ -1351,6 +1562,6 @@ end)
 
 Library:Notify({
     Title       = "rivals.lua",
-    Description = "post-s3 // use AR / non-projectile\nTP + AA + ESP + Prediction + Void Desync loaded",
+    Description = "post-s3 // use AR / non-projectile\nTP + AA + ESP + Prediction + Void Desync + Weapon Detection loaded",
     Time        = 6,
 })
