@@ -1,7 +1,7 @@
 --[[
     rivals.lua
     HvH utility — post-season3 patch (projectiles dead, use AR/non-projectile)
-    teleport-based aggression + anti-aim + esp + prediction
+    teleport-based aggression + anti-aim + esp + prediction + void desync
 ]]
 
 local Players   = cloneref(game:GetService("Players"))
@@ -84,6 +84,15 @@ local hrp = ch:FindFirstChild("HumanoidRootPart")
 lp.CharacterAdded:Connect(function(c)
     ch  = c
     hrp = c:WaitForChild("HumanoidRootPart")
+    -- reset void desync on respawn
+    pcall(function()
+        if VD then
+            stopVoidDesync()
+            VD.savedCF = nil
+            VD.savedLV = nil
+            VD.savedAV = nil
+        end
+    end)
 end)
 
 -- ── helpers ───────────────────────────────────────────────────────────────────
@@ -186,17 +195,15 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 1 — TELEPORT ATTACK
---  Save pos → tp onto enemy → shoot → return
---  Works without ragebot. Keybind or auto loop.
 -- ═══════════════════════════════════════════════════════════════════════════════
 local TP = {
     enabled    = false,
-    targetMode = "Head",      -- Head / Legs / HRP
-    priority   = "Closest",   -- Closest / LowHP / HighHP / Random
+    targetMode = "Head",
+    priority   = "Closest",
     teamcheck  = true,
-    autoLoop   = false,        -- continuously tp + shoot in loop
-    loopDelay  = 0.15,         -- seconds between each loop cycle
-    shots      = 1,            -- shots to fire each visit
+    autoLoop   = false,
+    loopDelay  = 0.15,
+    shots      = 1,
     running    = false,
 }
 
@@ -212,7 +219,6 @@ local function tpAttack()
 
     local savedCF = myhrp.CFrame
 
-    -- pick landing spot
     local landPos
     if TP.targetMode == "Head" then
         local head = tc:FindFirstChild("Head")
@@ -228,7 +234,6 @@ local function tpAttack()
     pcall(function() myhrp.CFrame = CFrame.new(landPos) end)
     task.wait(0.04)
 
-    -- fire N shots
     local bp = tc:FindFirstChild("HumanoidRootPart") or tc:FindFirstChild("UpperTorso") or tc:FindFirstChild("Head")
     if bp then
         for i = 1, math.max(TP.shots, 1) do
@@ -260,12 +265,6 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 2 — ANTI-AIM
---  Heartbeat desync, RenderStepped restore (your view never breaks)
---  Pitch: Off / Up / Zero / Down / Glitch / Random
---  Yaw Base: Local / AtTarget
---  Yaw Mode: Off / Forward / Backward / Spin / GlitchSpin / StutterSpin
---  Yaw Angle: -180 to 180
---  Underground toggle
 -- ═══════════════════════════════════════════════════════════════════════════════
 local AA = {
     enabled     = false,
@@ -400,7 +399,6 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 3 — ESP
---  Box (SelectionBox), health bar (BillboardGui), name tag, tracer lines
 -- ═══════════════════════════════════════════════════════════════════════════════
 local ESP = {
     boxes      = false,
@@ -414,7 +412,7 @@ local ESP = {
     tracerDur   = 0.3,
 }
 
-local espData    = {}    -- [player] = { box, billboard, tracer }
+local espData    = {}
 local tracerPool = {}
 
 local espFolder = Instance.new("Folder")
@@ -510,7 +508,6 @@ local function updateESPFrame()
     end
 end
 
--- tracer spawning (called from fireshot wrapper)
 local function spawnTracer(from3, to3)
     if not ESP.tracers then return end
     local l = Drawing.new("Line")
@@ -553,7 +550,6 @@ local function updateTracers()
     tracerPool = alive
 end
 
--- wrap fireshot to add tracer
 local _origFireShot = fireshot
 fireshot = function(bp, origin)
     if ESP.tracers and bp then
@@ -564,19 +560,17 @@ end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
 --  FEATURE 4 — PREDICTION AIM ASSIST
---  Velocity-extrapolated targeting fed into fireshot
---  Does not move your camera — purely modifies the shot destination
 -- ═══════════════════════════════════════════════════════════════════════════════
 local PRED = {
     enabled   = false,
-    strength  = 0.12,   -- seconds to lead target by
+    strength  = 0.12,
     teamcheck = true,
-    fov       = 300,    -- screen radius; 0 = infinite
+    fov       = 300,
     priority  = "Closest",
     part      = "Head",
 }
 
-local predHistory = {}  -- [player] = { pos, tick }
+local predHistory = {}
 
 local function getPredictedPart(char, partName)
     local p = char:FindFirstChild(partName)
@@ -620,14 +614,12 @@ local function startPred()
                 if not on then continue end
                 if (Vector2.new(sp.X, sp.Y) - center).Magnitude > fov then continue end
             end
-            -- just update history so when fireshot fires it leads correctly
             predictedPos(e.player, pt)
             break
         end
     end)
 end
 
--- override fireshot destination when PRED.enabled
 local _origFireShot2 = fireshot
 fireshot = function(bp, origin)
     if PRED.enabled and bp then
@@ -641,7 +633,6 @@ fireshot = function(bp, origin)
                 pos = bp.Position + vel * PRED.strength
             end
         end
-        -- create a fake part at predicted position
         local fake = Instance.new("Part")
         fake.Anchored   = true
         fake.CanCollide = false
@@ -656,12 +647,204 @@ fireshot = function(bp, origin)
 end
 
 -- ═══════════════════════════════════════════════════════════════════════════════
+--  FEATURE 5 — VOID DESYNC
+--  Auto-enables when enemy HP > your HP, level controls intensity
+--  0 = Off | 1 = Mild | 2 = Medium | 3 = Hard | 4 = Extreme
+-- ═══════════════════════════════════════════════════════════════════════════════
+local VD = {
+    enabled     = false,
+    level       = 0,
+    autoTrigger = true,
+    active      = false,
+    savedCF     = nil,
+    savedLV     = nil,
+    savedAV     = nil,
+    hbConn      = nil,
+    rsConn      = nil,
+    checkConn   = nil,
+}
+
+local VD_LEVEL_DESC = {
+    [0] = "Level 0: OFF — Void desync completely disabled",
+    [1] = "Level 1: Mild — Sinks hitbox 8 studs underground",
+    [2] = "Level 2: Medium — Underground + small random XZ offsets each frame",
+    [3] = "Level 3: Hard — Void coordinates + underground sink",
+    [4] = "Level 4: Extreme — Full void + massive random offsets every heartbeat",
+}
+
+local vdLevelLabel  = nil
+local vdStatusLabel = nil
+
+local function getMyHP()
+    local c = ch
+    if not c then return 100 end
+    local hm = c:FindFirstChildOfClass("Humanoid")
+    return hm and hm.Health or 100
+end
+
+local function getBestEnemyHP()
+    local best = 0
+    for _, p in ipairs(Players:GetPlayers()) do
+        if not isalive(p) then continue end
+        if sameteam(p) then continue end
+        local hm = p.Character and p.Character:FindFirstChildOfClass("Humanoid")
+        if hm and hm.Health > best then best = hm.Health end
+    end
+    return best
+end
+
+local function buildVoidFrame(level)
+    local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not myhrp then return nil end
+    if level == 0 then return nil end
+
+    local base = VD.savedCF or myhrp.CFrame
+    local pos  = base.Position
+
+    if level == 1 then
+        -- Mild: sink hitbox 8 studs underground, no horizontal change
+        return CFrame.new(pos - Vector3.new(0, 8, 0))
+
+    elseif level == 2 then
+        -- Medium: underground + small random XZ jitter to confuse resolver
+        local jx = math.random(-3, 3)
+        local jz = math.random(-3, 3)
+        return CFrame.new(pos.X + jx, pos.Y - 8, pos.Z + jz)
+
+    elseif level == 3 then
+        -- Hard: teleport hitbox thousands of studs away + underground
+        return CFrame.new(
+            pos.X + math.random(-5000, 5000),
+            pos.Y - 8,
+            pos.Z + math.random(-5000, 5000)
+        )
+
+    elseif level == 4 then
+        -- Extreme: full void coordinates, random angles, maximum chaos
+        return CFrame.new(
+            math.random(-2147483000, 2147483000),
+            math.random(-2147483000, 2147483000),
+            math.random(-2147483000, 2147483000)
+        ) * CFrame.Angles(
+            math.random() * math.pi * 2,
+            math.random() * math.pi * 2,
+            math.random() * math.pi * 2
+        )
+    end
+
+    return nil
+end
+
+local function stopVoidDesync()
+    VD.active = false
+    if VD.hbConn then VD.hbConn:Disconnect(); VD.hbConn = nil end
+    if VD.rsConn then
+        pcall(function() RunService:UnbindFromRenderStep("vd_sync") end)
+        VD.rsConn = nil
+    end
+    local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    if myhrp and VD.savedCF then
+        pcall(function()
+            myhrp.CFrame                  = VD.savedCF
+            myhrp.AssemblyLinearVelocity  = VD.savedLV or Vector3.zero
+            myhrp.AssemblyAngularVelocity = VD.savedAV or Vector3.zero
+        end)
+    end
+    VD.savedCF = nil
+    VD.savedLV = nil
+    VD.savedAV = nil
+end
+
+local function startVoidDesync()
+    if VD.active then return end
+    if VD.level == 0 then return end
+    local myhrp = ch and ch:FindFirstChild("HumanoidRootPart")
+    if not myhrp then return end
+
+    VD.active = true
+
+    -- Heartbeat: push fake position to server every frame
+    VD.hbConn = RunService.Heartbeat:Connect(function()
+        if not VD.active or VD.level == 0 then
+            stopVoidDesync(); return
+        end
+        local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        -- always save real CFrame before modifying
+        VD.savedCF = hrp.CFrame
+        VD.savedLV = hrp.AssemblyLinearVelocity
+        VD.savedAV = hrp.AssemblyAngularVelocity
+
+        local fake = buildVoidFrame(VD.level)
+        if fake then
+            pcall(function() hrp.CFrame = fake end)
+        end
+    end)
+
+    -- RenderStepped: restore your real position so your screen never breaks
+    RunService:BindToRenderStep("vd_sync", Enum.RenderPriority.First.Value, function()
+        if not VD.active then return end
+        local hrp = ch and ch:FindFirstChild("HumanoidRootPart")
+        if not hrp or not VD.savedCF then return end
+        pcall(function()
+            hrp.CFrame                  = VD.savedCF
+            hrp.AssemblyLinearVelocity  = VD.savedLV or Vector3.zero
+            hrp.AssemblyAngularVelocity = VD.savedAV or Vector3.zero
+        end)
+    end)
+    VD.rsConn = true
+
+    Library:Notify({
+        Title       = "Void Desync",
+        Description = "Activated — Level " .. VD.level,
+        Time        = 3,
+    })
+end
+
+local function startVDAutoCheck()
+    if VD.checkConn then VD.checkConn:Disconnect(); VD.checkConn = nil end
+    VD.checkConn = RunService.Heartbeat:Connect(function()
+        if not VD.enabled then return end
+        if VD.level == 0 then
+            if VD.active then stopVoidDesync() end
+            return
+        end
+        if not VD.autoTrigger then return end
+
+        local myHP    = getMyHP()
+        local enemyHP = getBestEnemyHP()
+
+        -- losing: enemy has more HP → activate desync
+        if enemyHP > myHP and not VD.active then
+            startVoidDesync()
+        end
+
+        -- winning: our HP is >= enemy HP → deactivate desync
+        if myHP >= enemyHP and VD.active then
+            stopVoidDesync()
+            Library:Notify({
+                Title       = "Void Desync",
+                Description = "Deactivated — you are winning now",
+                Time        = 2,
+            })
+        end
+    end)
+end
+
+local function stopVDAll()
+    stopVoidDesync()
+    if VD.checkConn then VD.checkConn:Disconnect(); VD.checkConn = nil end
+    VD.enabled = false
+end
+
+-- ═══════════════════════════════════════════════════════════════════════════════
 --  BUILD UI
 -- ═══════════════════════════════════════════════════════════════════════════════
 
 -- ── TELEPORT TAB ─────────────────────────────────────────────────────────────
-local tpLeft  = Tabs.Teleport:AddLeftGroupbox("Teleport Attack",  "zap")
-local tpRight = Tabs.Teleport:AddRightGroupbox("Configuration", "sliders-horizontal")
+local tpLeft  = Tabs.Teleport:AddLeftGroupbox("Teleport Attack", "zap")
+local tpRight = Tabs.Teleport:AddRightGroupbox("Configuration",  "sliders-horizontal")
 
 tpLeft:AddLabel({
     Text     = "Post-S3: projectiles are dead.\nUse AR / non-projectile weapons only.\nTeleport still works — tp to enemy, shoot, return.",
@@ -691,8 +874,8 @@ tpLeft:AddToggle("TPAutoLoop", {
 })
 
 tpLeft:AddButton({
-    Text       = "Teleport Once",
-    Tooltip    = "Single teleport to nearest enemy",
+    Text        = "Teleport Once",
+    Tooltip     = "Single teleport to nearest enemy",
     DoubleClick = false,
     Func        = function()
         task.spawn(tpAttack)
@@ -703,9 +886,9 @@ tpLeft:AddDivider()
 
 tpLeft:AddLabel("Keybind to teleport once:")
     :AddKeyPicker("TPKeybind", {
-        Default = "E",
-        Mode    = "Press",
-        Text    = "Teleport key",
+        Default  = "E",
+        Mode     = "Press",
+        Text     = "Teleport key",
         Callback = function()
             if TP.enabled then task.spawn(tpAttack) end
         end,
@@ -735,10 +918,10 @@ tpRight:AddToggle("TPTeamCheck", {
 })
 
 tpRight:AddSlider("TPShots", {
-    Text    = "Shots Per Visit",
-    Default = 1,
-    Min     = 1,
-    Max     = 8,
+    Text     = "Shots Per Visit",
+    Default  = 1,
+    Min      = 1,
+    Max      = 8,
     Rounding = 0,
     Tooltip  = "How many shots to fire before returning",
     Callback = function(v) TP.shots = v end,
@@ -756,7 +939,7 @@ tpRight:AddSlider("TPLoopDelay", {
 
 -- ── ANTI-AIM TAB ─────────────────────────────────────────────────────────────
 local aaLeft  = Tabs.AntiAim:AddLeftGroupbox("Pitch / Underground", "arrow-up-down")
-local aaRight = Tabs.AntiAim:AddRightGroupbox("Yaw", "rotate-cw")
+local aaRight = Tabs.AntiAim:AddRightGroupbox("Yaw",                "rotate-cw")
 
 aaLeft:AddLabel({
     Text     = "Desync: server sees fake angles.\nYour own view is always restored on RenderStepped.",
@@ -809,13 +992,13 @@ aaRight:AddDropdown("AAYawBase", {
 })
 
 aaRight:AddDropdown("AAYaw", {
-    Text   = "Yaw Mode",
-    Values = { "Off", "Forward", "Backward", "Spin", "GlitchSpin", "StutterSpin" },
+    Text    = "Yaw Mode",
+    Values  = { "Off", "Forward", "Backward", "Spin", "GlitchSpin", "StutterSpin" },
     Default = "Off",
     Tooltip = "Spin = 720°/s | GlitchSpin = spin + extreme glitch | StutterSpin = alternating direction",
     Callback = function(v)
-        AA.yaw   = v
-        aaSpinA  = 0
+        AA.yaw    = v
+        aaSpinA   = 0
         aaStutter = false
         if AA.enabled then startAA() end
     end,
@@ -834,8 +1017,8 @@ aaRight:AddSlider("AAYawAngle", {
 })
 
 -- ── ESP TAB ───────────────────────────────────────────────────────────────────
-local espLeft  = Tabs.ESP:AddLeftGroupbox("Visuals",       "eye")
-local espRight = Tabs.ESP:AddRightGroupbox("Tracers",      "activity")
+local espLeft  = Tabs.ESP:AddLeftGroupbox("Visuals", "eye")
+local espRight = Tabs.ESP:AddRightGroupbox("Tracers", "activity")
 
 espLeft:AddToggle("ESPBoxes", {
     Text    = "Boxes",
@@ -920,9 +1103,10 @@ espRight:AddLabel("Tracer Color")
     })
 
 -- ── MISC TAB ─────────────────────────────────────────────────────────────────
-local miscLeft  = Tabs.Misc:AddLeftGroupbox("Prediction Aim",  "crosshair")
-local miscRight = Tabs.Misc:AddRightGroupbox("Status",         "info")
+local miscLeft  = Tabs.Misc:AddLeftGroupbox("Prediction Aim", "crosshair")
+local miscRight = Tabs.Misc:AddRightGroupbox("Void Desync",   "shield-off")
 
+-- Prediction left side
 miscLeft:AddLabel({
     Text     = "Velocity prediction — leads the shot destination.\nDoes not move your camera.\nBest paired with Teleport.",
     DoesWrap = true,
@@ -976,12 +1160,13 @@ miscLeft:AddSlider("PREDFov", {
     Callback = function(v) PRED.fov = v end,
 })
 
--- status labels
-miscRight:AddLabel("Modules:")
-local sl_fig = miscRight:AddLabel("  FighterCtrl: " .. (mFig and "✓" or "⏳"))
-local sl_uti = miscRight:AddLabel("  Utility:     " .. (mUtil and "✓" or "✗"))
-local sl_enu = miscRight:AddLabel("  EnumLib:     " .. (mEnum and "✓" or "✗"))
-local sl_rem = miscRight:AddLabel("  UseItem:     " .. (rUseItem and "✓" or "⏳"))
+miscLeft:AddDivider()
+
+miscLeft:AddLabel("Modules:")
+local sl_fig = miscLeft:AddLabel("  FighterCtrl: " .. (mFig     and "✓" or "⏳"))
+local sl_uti = miscLeft:AddLabel("  Utility:     " .. (mUtil    and "✓" or "✗"))
+local sl_enu = miscLeft:AddLabel("  EnumLib:     " .. (mEnum    and "✓" or "✗"))
+local sl_rem = miscLeft:AddLabel("  UseItem:     " .. (rUseItem and "✓" or "⏳"))
 
 task.spawn(function()
     while task.wait(2) do
@@ -993,20 +1178,126 @@ task.spawn(function()
     end
 end)
 
-miscRight:AddDivider()
-miscRight:AddButton({
+miscLeft:AddDivider()
+
+miscLeft:AddButton({
     Text    = "Stop All",
     Tooltip = "Disable every feature at once",
     Func    = function()
         TP.enabled   = false; TP.autoLoop = false; stopTPLoop()
         AA.enabled   = false; stopAA()
         PRED.enabled = false; stopPred()
-        for p,_ in pairs(espData) do removeESP(p) end
+        stopVDAll()
+        for p, _ in pairs(espData) do removeESP(p) end
         for _, t in ipairs(tracerPool) do pcall(function() t.line:Remove() end) end
         tracerPool = {}
         Library:Notify({ Title = "rivals.lua", Description = "All features stopped.", Time = 3 })
     end,
 })
+
+-- Void Desync right side
+miscRight:AddLabel({
+    Text     = "Auto-enables when enemy HP > your HP.\nWait until you are winning — it disables itself.\nHigher level = harder to hit you.",
+    DoesWrap = true,
+})
+
+miscRight:AddToggle("VDEnabled", {
+    Text    = "Enable Void Desync",
+    Default = false,
+    Risky   = true,
+    Tooltip = "Master toggle for the void desync system",
+    Callback = function(v)
+        VD.enabled = v
+        if v then
+            startVDAutoCheck()
+        else
+            stopVDAll()
+        end
+    end,
+})
+
+miscRight:AddToggle("VDAutoTrigger", {
+    Text    = "Auto-Trigger (HP Check)",
+    Default = true,
+    Tooltip = "Automatically activate desync when enemy HP is higher than yours",
+    Callback = function(v)
+        VD.autoTrigger = v
+    end,
+})
+
+miscRight:AddDivider()
+
+miscRight:AddButton({
+    Text    = "Force Activate Now",
+    Tooltip = "Manually start void desync regardless of HP",
+    Func    = function()
+        if not VD.enabled then
+            Library:Notify({ Title = "Void Desync", Description = "Enable it first!", Time = 2 })
+            return
+        end
+        if VD.level == 0 then
+            Library:Notify({ Title = "Void Desync", Description = "Set level above 0 first!", Time = 2 })
+            return
+        end
+        startVoidDesync()
+    end,
+})
+
+miscRight:AddButton({
+    Text    = "Force Deactivate",
+    Tooltip = "Manually stop void desync immediately",
+    Func    = function()
+        stopVoidDesync()
+        Library:Notify({ Title = "Void Desync", Description = "Deactivated manually", Time = 2 })
+    end,
+})
+
+miscRight:AddDivider()
+
+miscRight:AddSlider("VDLevel", {
+    Text     = "Desync Level",
+    Default  = 0,
+    Min      = 0,
+    Max      = 4,
+    Rounding = 0,
+    Tooltip  = "0=Off | 1=Mild(underground) | 2=Medium(underground+jitter) | 3=Hard(void+underground) | 4=Extreme(full void chaos)",
+    Callback = function(v)
+        VD.level = v
+        if vdLevelLabel then
+            pcall(function() vdLevelLabel:SetText(VD_LEVEL_DESC[v] or "") end)
+        end
+        if v == 0 and VD.active then
+            stopVoidDesync()
+        end
+    end,
+})
+
+-- live description label updated by slider
+vdLevelLabel = miscRight:AddLabel(VD_LEVEL_DESC[0])
+
+miscRight:AddDivider()
+
+-- live HP + status readout
+vdStatusLabel = miscRight:AddLabel("Status: Disabled")
+
+task.spawn(function()
+    while task.wait(0.5) do
+        if not vdStatusLabel then break end
+        pcall(function()
+            if not VD.enabled then
+                vdStatusLabel:SetText("Status: Disabled")
+            elseif VD.active then
+                local myHP = math.floor(getMyHP())
+                local enHP = math.floor(getBestEnemyHP())
+                vdStatusLabel:SetText("Status: ⚡ ACTIVE | You: " .. myHP .. " HP  Enemy: " .. enHP .. " HP")
+            else
+                local myHP = math.floor(getMyHP())
+                local enHP = math.floor(getBestEnemyHP())
+                vdStatusLabel:SetText("Status: Watching | You: " .. myHP .. " HP  Enemy: " .. enHP .. " HP")
+            end
+        end)
+    end
+end)
 
 -- ── UI SETTINGS TAB ───────────────────────────────────────────────────────────
 local uiGroup = Tabs.Settings:AddLeftGroupbox("Menu", "wrench")
@@ -1033,8 +1324,8 @@ uiGroup:AddLabel("Menu Keybind")
     })
 
 uiGroup:AddButton("Unload", function()
-    stopAA(); stopTPLoop(); stopPred()
-    for p,_ in pairs(espData) do removeESP(p) end
+    stopAA(); stopTPLoop(); stopPred(); stopVDAll()
+    for p, _ in pairs(espData) do removeESP(p) end
     espFolder:Destroy()
     Library:Unload()
 end)
@@ -1060,6 +1351,6 @@ end)
 
 Library:Notify({
     Title       = "rivals.lua",
-    Description = "post-s3 // use AR / non-projectile\nTP + AA + ESP + Prediction loaded",
+    Description = "post-s3 // use AR / non-projectile\nTP + AA + ESP + Prediction + Void Desync loaded",
     Time        = 6,
 })
